@@ -1,5 +1,5 @@
-# gha-example
-Example of a simple app to test GitHub Actions.
+# ads-backend
+Flask backend for ADS
 
 ## Running
 Get into the virtual environment:  
