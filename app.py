@@ -4,7 +4,7 @@ app = Flask(__name__)
 
 @app.route("/")
 def main():
-    return "gha-example"
+    return "ads-backend"
 
 # ensure the flask app runs only when this script is executed directly
 # if it's imported as a module, it won't run

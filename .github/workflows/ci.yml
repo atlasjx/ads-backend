@@ -30,4 +30,4 @@ jobs:
           PYTHONPATH=. pytest
 
       - name: Build Docker image
-        run: docker build -t gha-example .
+        run: docker build -t ads-backend .
