@@ -1,0 +1,6 @@
+id,imdb_id,title,original_title,overview,release_date,adult,budget,genres,production_companies,production_countries,revenue,runtime,spoken_languages,status,tagline,homepage,poster_path,popularity,vote_average,vote_count,original_language
+1,tt0000001,Test Movie One,Test Movie One,"An early film.",1995-10-30,False,100000,"[{'id': 16, 'name': 'Animation'}]","[{'name': 'Test Studio', 'id': 1}]",[{'iso_3166_1': 'US', 'name': 'United States of America'}],0,90.0,[{'iso_639_1': 'en', 'name': 'English'}],Released,,http://example.com,/path.jpg,1.0,7.0,10,en
+2,tt0000002,Test Movie Two,Test Movie Two,"A later film.",,False,200000,"[]","[]",[],0,100.0,[],Released,,http://example.com,/path2.jpg,2.0,6.5,5,en
+3,tt0000003,Test Movie Three,Test Movie Three,"Malformed date example.",09/15/2001,False,300000,"[]","[]",[],0,110.0,[],Released,,http://example.com,/path3.jpg,3.0,8.0,20,en
+4,,Missing ID Movie,Missing ID Movie,"No id present.",2000-01-01,False,0,"[]","[]",[],0,0,[],Released,,http://example.com,/path4.jpg,0.5,5.0,1,en
+
