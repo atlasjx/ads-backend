@@ -11,11 +11,11 @@ app = Flask(__name__)
 
 # Database configuration
 DB_CONFIG = {
-    'host': os.getenv('DB_HOST', 'localhost'),
-    'database': os.getenv('DB_NAME', 'movies_db'),
-    'user': os.getenv('DB_USER', 'postgres'),
-    'password': os.getenv('DB_PASSWORD', 'postgres'),
-    'port': os.getenv('DB_PORT', 5432)
+    'host': os.getenv('DATABASE_HOST', 'db'),
+    'database': os.getenv('DATABASE_NAME', 'movies_db'),
+    'user': os.getenv('DATABASE_USER', 'postgres'),
+    'password': os.getenv('DATABASE_PASSWORD', 'postgres'),
+    'port': os.getenv('DATABASE_PORT', 5432)
 }
 
 # Simple token storage (in production, use Redis or database)
