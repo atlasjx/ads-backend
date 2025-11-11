@@ -17,7 +17,7 @@ COPY . .
 RUN chmod +x /app/scripts/*.sh || true
 RUN chmod +x /app/scripts/*.py || true
 
-EXPOSE 5000
+EXPOSE 80
 
 # Default command runs the Flask app; docker-compose can override this to run loaders or other one-off tasks
 CMD ["python", "app.py"]

@@ -27,7 +27,7 @@ services:
       DATABASE_USER: movies_user
       DATABASE_PASSWORD: movies_pass
     ports:
-      - "5000:5000"
+      - "80:80"
     volumes:
       - ./:/app
     command: ["sh", "-c", "sh ./scripts/wait-for-db.sh && python app.py"]
