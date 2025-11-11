@@ -1,6 +1,5 @@
--- bd_postgres.sql
--- Schema for Postgres
-
+-- Existing tables
+-- EXISTING MOVIE TABLES (keep as is)
 CREATE TABLE IF NOT EXISTS movies (
     id INTEGER PRIMARY KEY,
     imdb_id TEXT,
@@ -46,7 +45,41 @@ CREATE TABLE IF NOT EXISTS movie_companies (
     PRIMARY KEY (movie_id, company_id)
 );
 
+-- ============================================
+-- NEW TABLES FOR AUTHENTICATION AND RATINGS
+-- ============================================
+CREATE TABLE IF NOT EXISTS users (
+    id SERIAL PRIMARY KEY,
+    username TEXT UNIQUE NOT NULL,
+    email TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS ratings (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    movie_id INTEGER REFERENCES movies(id) ON DELETE CASCADE,
+    rating REAL NOT NULL CHECK (rating >= 0 AND rating <= 10),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, movie_id)
+);
+
+-- ============================================
+-- INDEXES
+-- ============================================
+
+-- Existing indexes
 CREATE INDEX IF NOT EXISTS idx_movies_title ON movies(title);
 CREATE INDEX IF NOT EXISTS idx_genres_name ON genres(name);
 CREATE INDEX IF NOT EXISTS idx_companies_name ON production_companies(name);
 
+-- New indexes for performance
+CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
+CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+CREATE INDEX IF NOT EXISTS idx_ratings_user_id ON ratings(user_id);
+CREATE INDEX IF NOT EXISTS idx_ratings_movie_id ON ratings(movie_id);
+CREATE INDEX IF NOT EXISTS idx_movies_release_date ON movies(release_date);
+CREATE INDEX IF NOT EXISTS idx_movies_popularity ON movies(popularity);

@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   db:
     image: postgres:15
@@ -10,7 +8,7 @@ services:
     volumes:
       - db_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U movies_db"]
+      test: ["CMD-SHELL", "pg_isready -U movies_user -d movies_db"]
       interval: 5s
       timeout: 5s
       retries: 5
