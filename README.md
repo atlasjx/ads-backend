@@ -23,6 +23,13 @@ This README explains how to run the stack, populate the database, and some troub
 
 ## Quick start (Docker)
 
+START:
+docker compose up
+
+REMOVE:
+docker compose down -v
+
+
 1. Build images and start only the DB
 
 ```bash
