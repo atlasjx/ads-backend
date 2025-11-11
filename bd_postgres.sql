@@ -1,5 +1,6 @@
--- Existing tables
--- EXISTING MOVIE TABLES (keep as is)
+-- ============================================
+-- MOVIE TABLES (without foreign keys)
+-- ============================================
 CREATE TABLE IF NOT EXISTS movies (
     id INTEGER PRIMARY KEY,
     imdb_id TEXT,
@@ -29,8 +30,8 @@ CREATE TABLE IF NOT EXISTS genres (
 );
 
 CREATE TABLE IF NOT EXISTS movie_genres (
-    movie_id INTEGER REFERENCES movies(id) ON DELETE CASCADE,
-    genre_id INTEGER REFERENCES genres(id) ON DELETE CASCADE,
+    movie_id INTEGER,
+    genre_id INTEGER,
     PRIMARY KEY (movie_id, genre_id)
 );
 
@@ -40,13 +41,13 @@ CREATE TABLE IF NOT EXISTS production_companies (
 );
 
 CREATE TABLE IF NOT EXISTS movie_companies (
-    movie_id INTEGER REFERENCES movies(id) ON DELETE CASCADE,
-    company_id INTEGER REFERENCES production_companies(id) ON DELETE CASCADE,
+    movie_id INTEGER,
+    company_id INTEGER,
     PRIMARY KEY (movie_id, company_id)
 );
 
 -- ============================================
--- NEW TABLES FOR AUTHENTICATION AND RATINGS
+-- AUTHENTICATION AND RATINGS TABLES
 -- ============================================
 CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
@@ -59,8 +60,8 @@ CREATE TABLE IF NOT EXISTS users (
 
 CREATE TABLE IF NOT EXISTS ratings (
     id SERIAL PRIMARY KEY,
-    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-    movie_id INTEGER REFERENCES movies(id) ON DELETE CASCADE,
+    user_id INTEGER,
+    movie_id INTEGER,
     rating REAL NOT NULL CHECK (rating >= 0 AND rating <= 10),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -71,15 +72,17 @@ CREATE TABLE IF NOT EXISTS ratings (
 -- INDEXES
 -- ============================================
 
--- Existing indexes
+-- Movie indexes
 CREATE INDEX IF NOT EXISTS idx_movies_title ON movies(title);
+CREATE INDEX IF NOT EXISTS idx_movies_release_date ON movies(release_date);
+CREATE INDEX IF NOT EXISTS idx_movies_popularity ON movies(popularity);
+
+-- Genres and companies
 CREATE INDEX IF NOT EXISTS idx_genres_name ON genres(name);
 CREATE INDEX IF NOT EXISTS idx_companies_name ON production_companies(name);
 
--- New indexes for performance
+-- Users and ratings
 CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_ratings_user_id ON ratings(user_id);
 CREATE INDEX IF NOT EXISTS idx_ratings_movie_id ON ratings(movie_id);
-CREATE INDEX IF NOT EXISTS idx_movies_release_date ON movies(release_date);
-CREATE INDEX IF NOT EXISTS idx_movies_popularity ON movies(popularity);

@@ -28,7 +28,7 @@ services:
       - "80:80"
     volumes:
       - ./:/app
-    command: ["sh", "-c", "sh ./scripts/wait-for-db.sh && python app.py"]
+    command: ["sh", "-c", "python app.py"]
 
   populate:
     build: .
@@ -44,7 +44,7 @@ services:
     volumes:
       - ./:/app
       - data:/data
-    command: ["sh", "-c", "sh ./scripts/wait-for-db.sh && sh ./scripts/download_and_populate.sh /data"]
+    command: ["sh", "-c", "python setup_bd.py || true"]
 
 volumes:
   db_data:
