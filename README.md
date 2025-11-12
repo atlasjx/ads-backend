@@ -1,5 +1,6 @@
 # ads-backend
 
+
 This repository contains a minimal Flask API and scripts to populate a movies database from the Kaggle "The Movies Dataset" CSV. It supports two population modes:
 - SQLite (local) — `scripts/load_movies.py` + `bd.sql`
 - PostgreSQL (Docker/compose) — `scripts/load_movies_pg.py` + `bd_postgres.sql`
