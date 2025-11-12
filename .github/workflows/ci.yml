@@ -32,5 +32,4 @@ jobs:
     if: success()
     steps:
       - name: Deploy to Render via webhook
-        run: |
-          curl -X POST ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: curl -X POST ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
