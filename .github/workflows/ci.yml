@@ -24,12 +24,25 @@ jobs:
         run: |
           source venv/bin/activate
           PYTHONPATH=. pytest
-#      - name: Build Docker image
-#        run: docker build -t ads-backend .
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build Docker image
+        run: |
+          docker build -t dany99486/movies-backend:latest .
+
+      - name: Push Docker image
+        run: |
+          docker push dany99486/movies-backend:latest
+
   deploy:
     needs: build-and-test
     runs-on: ubuntu-latest
     if: success()
     steps:
-      - name: Deploy to Render via webhook
-        run: curl -X POST ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+      - name: Trigger Render Deploy via webhook
+        run: |
+          curl -X POST ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
