@@ -24,7 +24,19 @@ active_tokens = {}
 
 def get_db_connection():
     """Create and return a database connection"""
-    return psycopg2.connect(**DB_CONFIG, cursor_factory=RealDictCursor)
+    db_url = os.getenv("DATABASE_URL")
+    if db_url:
+        return psycopg2.connect(db_url, cursor_factory=RealDictCursor)
+    else:
+        # fallback local
+        DB_CONFIG = {
+            'host': os.getenv('DATABASE_HOST', 'localhost'),
+            'database': os.getenv('DATABASE_NAME', 'movies_db'),
+            'user': os.getenv('DATABASE_USER', 'postgres'),
+            'password': os.getenv('DATABASE_PASSWORD', 'postgres'),
+            'port': os.getenv('DATABASE_PORT', 5432)
+        }
+        return psycopg2.connect(**DB_CONFIG, cursor_factory=RealDictCursor)
 
 
 def hash_password(password):
@@ -432,3 +444,4 @@ def get_home():
 # Ensure the flask app runs only when this script is executed directly
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=80)
+    
