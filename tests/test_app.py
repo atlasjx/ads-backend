@@ -1,5 +1,183 @@
-def test_app():
-    from app import app
-    client = app.test_client()
-    response = client.get("/")
-    assert response.data == b"ads-backend"
+import pytest
+import requests
+import json
+import time
+
+BASE_URL = "http://localhost"
+API = BASE_URL + "/api"
+
+
+# -----------------------------------
+# Helpers
+# -----------------------------------
+
+def pretty(label, data):
+    print(f"\n===== {label} =====")
+    print(json.dumps(data, indent=4))
+
+
+# -----------------------------------
+# Fixtures
+# -----------------------------------
+
+@pytest.fixture(scope="session")
+def test_user():
+    """Generate a unique user for API tests."""
+    ts = int(time.time())
+    return {
+        "username": f"pytest_user_{ts}",
+        "email": f"pytest_email_{ts}@test.com",
+        "password": "testpassword123"
+    }
+
+
+@pytest.fixture(scope="session")
+def token(test_user):
+    """Register and login user, return token."""
+
+    # Register (ignore if already exists)
+    requests.post(f"{API}/auth/register", json=test_user)
+
+    # Login
+    res = requests.post(f"{API}/auth/login", json={
+        "username": test_user["username"],
+        "password": test_user["password"]
+    })
+
+    data = res.json()
+    pretty("LOGIN RESPONSE", data)
+
+    assert "token" in data, "Login failed, no token returned"
+
+    return data["token"]
+
+
+# -----------------------------------
+# Tests (endpoint-only)
+# -----------------------------------
+
+def test_register_user(test_user):
+    """Test user registration endpoint."""
+    res = requests.post(f"{API}/auth/register", json=test_user)
+    data = res.json()
+
+    pretty("REGISTER RESPONSE", data)
+
+    # Accept 201 (success) or 409 (already exists)
+    assert res.status_code in (201, 409)
+
+
+def test_login_user(test_user):
+    """Test login endpoint."""
+    res = requests.post(f"{API}/auth/login", json={
+        "username": test_user["username"],
+        "password": test_user["password"]
+    })
+
+    data = res.json()
+    pretty("LOGIN AGAIN RESPONSE", data)
+
+    assert "token" in data
+
+
+def test_get_movies():
+    """Test movie browsing endpoint."""
+    res = requests.get(f"{API}/movies?limit=5")
+    data = res.json()
+
+    pretty("MOVIES LIST", data)
+
+    assert "movies" in data
+    assert isinstance(data["movies"], list)
+
+
+def test_insert_movie(token):
+    """Test inserting a movie (auth required)."""
+    headers = {"Authorization": f"Bearer {token}"}
+
+    movie = {
+        "imdb_id": f"pytest_tt_{int(time.time())}",
+        "title": "Pytest Movie",
+        "original_title": "Pytest Movie Original",
+        "overview": "Movie inserted during pytest",
+        "release_date": "2025-01-01",
+        "adult": False,
+        "budget": 100000,
+        "revenue": 200000,
+        "runtime": 110,
+        "popularity": 10,
+        "vote_average": 7.1,
+        "vote_count": 20,
+        "original_language": "en",
+        "status": "Released",
+        "tagline": "pytest tagline",
+        "homepage": None,
+        "poster_path": None,
+        "raw_genres": [],
+        "raw_production_companies": []
+    }
+
+    res = requests.post(f"{API}/movies", json=movie, headers=headers)
+    data = res.json()
+
+    pretty("INSERT MOVIE RESPONSE", data)
+
+    assert res.status_code == 201
+    assert "movie_id" in data
+
+
+def test_search_movies():
+    """Test movie search endpoint."""
+    res = requests.get(f"{API}/movies/search?q=Test")
+    data = res.json()
+
+    pretty("SEARCH RESULTS", data)
+
+    assert "movies" in data
+    assert isinstance(data["movies"], list)
+
+
+def test_submit_rating(token):
+    """Test rating submission endpoint."""
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Use movie ID 1 (should exist in your DB)
+    movie_id = 1
+
+    res = requests.post(
+        f"{API}/movie/{movie_id}/rating",
+        json={"rating": 8},
+        headers=headers
+    )
+
+    data = res.json()
+
+    pretty("SUBMIT RATING RESPONSE", data)
+
+    assert res.status_code in (200, 201)
+    assert "rating" in data
+
+
+def test_home_feed(token):
+    """Test home feed endpoint."""
+    res = requests.get(
+        f"{API}/home",
+        headers={"Authorization": f"Bearer {token}"}
+    )
+    data = res.json()
+
+    pretty("HOME FEED", data)
+
+    assert "popular" in data
+    assert "recent" in data
+
+
+def test_home_feed_unauthenticated():
+    """Ensure unauthenticated home feed still works."""
+    res = requests.get(f"{API}/home")
+    data = res.json()
+
+    pretty("HOME FEED (NO AUTH)", data)
+
+    assert "popular" in data
+    assert "recent" in data

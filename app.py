@@ -215,17 +215,17 @@ def get_movies():
 @app.route("/api/movies", methods=['POST'])
 @require_auth
 def insert_movie():
-    """Insert new movies (authenticated)"""
+    """Insert new movie (authenticated) with auto-generated ID"""
     data = request.get_json()
 
-    if not data or not 'title' in data:
+    if not data or 'title' not in data:
         return jsonify({'error': 'Missing required field: title'}), 400
 
     try:
         conn = get_db_connection()
         cur = conn.cursor()
 
-        # Insert movie
+        # Insert movie without specifying ID (auto-generated)
         cur.execute(
             """
             INSERT INTO movies (
@@ -238,11 +238,12 @@ def insert_movie():
                 %(adult)s, %(budget)s, %(revenue)s, %(runtime)s, %(popularity)s, %(vote_average)s,
                 %(vote_count)s, %(original_language)s, %(status)s, %(tagline)s, %(homepage)s,
                 %(poster_path)s, %(raw_genres)s, %(raw_production_companies)s
-            ) RETURNING id
+            ) RETURNING id;
             """,
             data
         )
-        movie_id = cur.fetchone()['id']
+
+        movie_id = cur.fetchone()[0]  # fetch the auto-generated ID
 
         conn.commit()
         cur.close()
@@ -255,7 +256,6 @@ def insert_movie():
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-
 
 @app.route("/api/movies/search", methods=['GET'])
 def search_movies():

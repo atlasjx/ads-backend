@@ -26,6 +26,8 @@ from pathlib import Path
 from datetime import datetime
 import logging
 
+from psycopg2 import sql
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Database configuration
@@ -125,53 +127,11 @@ def download_dataset(save_dir):
     return csv_path
 
 
-def parse_json_field(val):
-    """Parse JSON field from CSV, handling various formats."""
-    if not val or val.strip() == "":
-        return []
-    try:
-        return json.loads(val)
-    except Exception:
-        try:
-            txt = val.replace("'", '"')
-            txt = txt.replace('None', 'null')
-            txt = txt.replace('True', 'true').replace('False', 'false')
-            return json.loads(txt)
-        except Exception:
-            return []
-
-
-def sanitize_date(val):
-    """Return a YYYY-MM-DD string or None."""
-    if not val:
-        return None
-    s = val.strip()
-    if s == "":
-        return None
-
-    if DATE_RE.match(s):
-        return s
-
-    formats = ["%Y-%m-%d", "%m/%d/%Y", "%Y"]
-    for fmt in formats:
-        try:
-            dt = datetime.strptime(s[:10], fmt) if fmt == "%Y-%m-%d" or fmt == "%m/%d/%Y" else datetime.strptime(s, fmt)
-            return dt.date().isoformat()
-        except Exception:
-            continue
-
-    if len(s) >= 10 and DATE_RE.match(s[:10]):
-        return s[:10]
-
-    logging.debug(f"Unparseable release_date '{s}' -> storing NULL")
-    return None
-
-
 def get_schema_sql():
     """Return the database schema SQL."""
     return """
     CREATE TABLE IF NOT EXISTS movies (
-        id INTEGER PRIMARY KEY,
+        id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
         imdb_id TEXT,
         title TEXT,
         original_title TEXT,
@@ -215,6 +175,25 @@ def get_schema_sql():
         PRIMARY KEY (movie_id, company_id)
     );
 
+    CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        username TEXT UNIQUE NOT NULL,
+        email TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS ratings (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER,
+        movie_id INTEGER,
+        rating REAL NOT NULL CHECK (rating >= 0 AND rating <= 10),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(user_id, movie_id)
+    );
+
     CREATE INDEX IF NOT EXISTS idx_movies_release_date ON movies(release_date);
     CREATE INDEX IF NOT EXISTS idx_movies_title ON movies(title);
     """
@@ -222,11 +201,12 @@ def get_schema_sql():
 
 def apply_schema(conn):
     """Apply database schema."""
-    sql = get_schema_sql()
+    sql_schema = get_schema_sql()
     cur = conn.cursor()
-    for stmt in [s.strip() for s in sql.split(';') if s.strip()]:
+    for stmt in [s.strip() for s in sql_schema.split(';') if s.strip()]:
         cur.execute(stmt)
     conn.commit()
+    cur.close()
 
 
 def ensure_database_exists():
@@ -241,6 +221,7 @@ def ensure_database_exists():
     if not cur.fetchone():
         cur.execute(f"CREATE DATABASE {DB_NAME}")
         logging.info(f"Database {DB_NAME} created")
+    cur.close()
     tmp_conn.close()
 
 
@@ -269,30 +250,51 @@ def get_or_create_company(conn, name):
     conn.commit()
     return cid
 
+
 def parse_real(value):
+    """Parse a float value, returning None if empty or invalid."""
     try:
         return float(value) if value != "" else None
     except Exception:
         return None
 
+
 def parse_int(value):
+    """Parse an integer value, returning None if empty or invalid."""
     try:
         return int(value) if value != "" else None
     except Exception:
         return None
 
+
 def parse_bool(value):
+    """Parse a boolean value."""
     if isinstance(value, str):
         return value.lower() == "true"
     return bool(value)
 
+
 def parse_date(value):
+    """Parse a date string in YYYY-MM-DD format."""
     try:
         return datetime.strptime(value, "%Y-%m-%d").date() if value else None
     except Exception:
         return None
 
+
+def movies_table_has_data(conn) -> bool:
+    """Check if the 'movies' table has any rows using COUNT(*)."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM movies;")
+            row_count = cur.fetchone()[0]
+            return row_count > 0
+    except Exception as e:
+        logging.debug(f"Could not check if 'movies' table has data: {e}")
+        return False
+
 def load_movies_to_postgres(csv_path, conn):
+    """Load movies from CSV file into Postgres database."""
     apply_schema(conn)
 
     cur = conn.cursor()
@@ -309,9 +311,11 @@ def load_movies_to_postgres(csv_path, conn):
                     raw_genres = '[]'
 
                 try:
-                    raw_production_companies = json.dumps(eval(row['production_companies'])) if row.get('production_companies') else '[]'
+                    raw_production_companies = json.dumps(eval(row['production_companies'])) if row.get(
+                        'production_companies') else '[]'
                 except Exception as e:
-                    logging.warning(f"Row {row_num}: Failed to parse production_companies. Using empty list. Error: {e}")
+                    logging.warning(
+                        f"Row {row_num}: Failed to parse production_companies. Using empty list. Error: {e}")
                     raw_production_companies = '[]'
 
                 # Sanitize numeric, date, boolean fields
@@ -350,7 +354,6 @@ def load_movies_to_postgres(csv_path, conn):
     cur.close()
     logging.info("Finished loading movies.")
 
-    cur.close()
 
 def main():
     parser = argparse.ArgumentParser(description='Setup movies database')
@@ -359,74 +362,37 @@ def main():
     args = parser.parse_args()
 
     try:
-        # Step 1: Wait for Postgres if configured
+        # Step 1: Validate configuration
+        if not DB_HOST:
+            logging.error("DATABASE_HOST not set. Postgres configuration required.")
+            sys.exit(1)
+
+        # Step 2: Wait for Postgres if configured
         if DB_HOST and DB_HOST != 'localhost':
             if not wait_for_postgres(DB_HOST, DB_PORT, DB_USER):
                 logging.error("Failed to connect to Postgres")
                 sys.exit(1)
 
-        # Step 2: Check if the database exists and has data
-        if DB_HOST:
-            conn = psycopg2.connect(
-                host=DB_HOST, port=DB_PORT, dbname='postgres',  # connect to default DB
-                user=DB_USER, password=DB_PASS
-            )
-            conn.autocommit = True
-            cur = conn.cursor()
+        # Step 3: Ensure database exists
+        ensure_database_exists()
 
-            # Check if DB exists
-            cur.execute("SELECT 1 FROM pg_database WHERE datname = %s;", (DB_NAME,))
-            db_exists = cur.fetchone() is not None
-            cur.close()
+        # Step 4: Connect to target database
+        conn = psycopg2.connect(
+            host=DB_HOST, port=DB_PORT, dbname=DB_NAME,
+            user=DB_USER, password=DB_PASS
+        )
+
+        # Step 5: Apply schema
+        apply_schema(conn)
+
+        # Step 6: Check if movies table has data
+        if movies_table_has_data(conn):
+            logging.info(f"Movies table already has data. Skipping data load.")
             conn.close()
-
-            db_has_content = False
-            if db_exists:
-                # Connect to the DB itself to check if it has any tables/data
-                conn = psycopg2.connect(
-                    host=DB_HOST, port=DB_PORT, dbname=DB_NAME,
-                    user=DB_USER, password=DB_PASS
-                )
-                cur = conn.cursor()
-                # Check if there is at least one table with data
-                cur.execute("""
-                    SELECT EXISTS (
-                        SELECT 1
-                        FROM information_schema.tables
-                        WHERE table_schema = 'public'
-                        AND table_type = 'BASE TABLE'
-                    );
-                """)
-                has_tables = cur.fetchone()[0]
-
-                if has_tables:
-                    cur.execute("""
-                        SELECT EXISTS (
-                            SELECT 1
-                            FROM pg_tables
-                            WHERE schemaname='public'
-                            AND tablename IN (
-                                SELECT table_name FROM information_schema.tables
-                                WHERE table_schema='public'
-                            )
-                            AND EXISTS (
-                                SELECT 1 FROM %s LIMIT 1
-                            )
-                        );
-                    """, ('movies_db',))  # Optional: check specific table
-                    # Simple approach: assume if tables exist, DB has content
-                    db_has_content = True
-
-                cur.close()
-                conn.close()
-
         else:
-            logging.error("DATABASE_HOST not set. Postgres configuration required.")
-            sys.exit(1)
+            logging.info("Movies table is empty. Downloading and loading data...")
 
-        # Step 3: If DB does not exist or is empty, create and load data
-        if not db_exists or not db_has_content:
-            logging.info(f"Database '{DB_NAME}' not found or empty. Creating and loading data...")
+            conn.close()
 
             # Download dataset if not skipped
             if not args.skip_download:
@@ -437,8 +403,7 @@ def main():
                     logging.error(f"CSV file not found at {csv_path}")
                     sys.exit(1)
 
-            # Create DB if it doesn't exist
-            ensure_database_exists()
+            # Reconnect and load data
             conn = psycopg2.connect(
                 host=DB_HOST, port=DB_PORT, dbname=DB_NAME,
                 user=DB_USER, password=DB_PASS
@@ -448,16 +413,12 @@ def main():
 
             logging.info("Data successfully loaded into Postgres!")
 
-        else:
-            logging.info(f"Database '{DB_NAME}' already exists and has data. Skipping download and load steps.")
-
         logging.info("Setup complete!")
 
     except Exception as e:
         logging.exception(f"Setup failed: {e}")
         sys.exit(1)
 
-    logging.info("Startup complete!")
 
 if __name__ == '__main__':
     main()
