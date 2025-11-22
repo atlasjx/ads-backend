@@ -386,7 +386,7 @@ def main():
 
         # Step 6: Check if movies table has data
         if movies_table_has_data(conn):
-            logging.info(f"Movies table already has data. Skipping data load.")
+            logging.info("Movies table already has data. Skipping data load.")
             conn.close()
         else:
             logging.info("Movies table is empty. Downloading and loading data...")
