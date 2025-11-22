@@ -26,7 +26,6 @@ from pathlib import Path
 from datetime import datetime
 import logging
 
-from psycopg2 import sql
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -57,7 +56,7 @@ def wait_for_postgres(host, port, user, max_attempts=30):
             if result.returncode == 0:
                 logging.info("Postgres is ready")
                 return True
-        except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+        except (subprocess.TimeoutExpired, FileNotFoundError):
             # If pg_isready is not available, try a direct connection
             try:
                 conn = psycopg2.connect(

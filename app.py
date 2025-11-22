@@ -5,7 +5,6 @@ from psycopg2.extras import RealDictCursor
 import hashlib
 import secrets
 import os
-from datetime import datetime
 
 app = Flask(__name__)
 
@@ -116,7 +115,7 @@ def register():
         }), 201
 
     except psycopg2.IntegrityError as e:
-        return jsonify({'error': 'Username or email already exists'}), 409
+        return jsonify({'error': f'Username or email already exists,{e}'}), 409
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
