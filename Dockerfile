@@ -9,9 +9,11 @@ RUN apt-get update && \
 
 COPY requirements.txt .
 
-# Upgrade pip, setuptools, urllib3 antes de instalar requirements
-RUN pip install --upgrade pip setuptools urllib3
+# Atualiza pip, setuptools e wheel antes de instalar dependências
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
+# Copia o requirements.txt e instala dependências
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .

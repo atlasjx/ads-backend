@@ -1,6 +1,7 @@
 Flask
 pytest
 psycopg2-binary
-requests
+requests>=2.31.0
 gunicorn
 urllib3>=2.5.0
+setuptools>=78.1.1
