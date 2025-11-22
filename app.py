@@ -1,4 +1,5 @@
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 from functools import wraps
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -7,6 +8,7 @@ import secrets
 import os
 
 app = Flask(__name__)
+CORS(app, resources={r"/api/*": {"origins": "*"}})
 
 # Database configuration
 DB_CONFIG = {
