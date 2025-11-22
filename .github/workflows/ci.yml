@@ -40,10 +40,7 @@ jobs:
         uses: PyCQA/bandit-action@v1
 
       - name: Run pip-audit
-        env:
-          PIP_CONSTRAINT: constraints.txt
-        run: |
-          "$PYTHON_EXEC" -m pip_audit --requirement requirements.txt
+        uses: pypa/gh-action-pip-audit@v1.1.0
 
       - name: Run tests
         env:
