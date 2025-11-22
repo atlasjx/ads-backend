@@ -1,4 +1,4 @@
-FROM python:3.13-slim
+FROM python:3.14-slim
 
 WORKDIR /app
 
@@ -10,7 +10,7 @@ RUN apt-get update && \
 COPY requirements.txt .
 
 # Atualiza pip, setuptools e wheel antes de instalar dependências
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel
+#RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
 # Copia o requirements.txt e instala dependências
 COPY requirements.txt .
