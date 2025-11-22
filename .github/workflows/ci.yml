@@ -34,7 +34,9 @@ jobs:
         with:
           src: "."
 
-  
+      - name: Perform Bandit Analysis
+        uses: PyCQA/bandit-action@v1
+
       - name: Run pip-audit
         uses: pypa/gh-action-pip-audit@v1.1.0     
 
