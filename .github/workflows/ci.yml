@@ -39,7 +39,7 @@ jobs:
 
       - name: Run pip-audit
         run: |
-          python -m pip_audit --requirement requirements.txt --constraint constraints.txt
+          pip-audit -r requirements.txt -c constraints.txt
 
       - name: Run tests
         env:
