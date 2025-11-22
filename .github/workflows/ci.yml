@@ -25,7 +25,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip==25.3 setuptools==78.1.1 wheel
+          python -m pip install --upgrade pip setuptools wheel
           python -m venv venv
           source venv/bin/activate
           pip install -r requirements.txt -c constraints.txt
@@ -38,8 +38,11 @@ jobs:
       - name: Perform Bandit Analysis
         uses: PyCQA/bandit-action@v1
 
-      - name: Run pip-audit
-        uses: pypa/gh-action-pip-audit@v1.1.0     
+      - name: Run pip-audit (run inside the same venv and audit requirements)
+        run: |
+          source venv/bin/activate
+          python -m pip install --upgrade pip-audit
+          pip-audit --requirement requirements.txt
 
       - name: Run tests
         run: |
