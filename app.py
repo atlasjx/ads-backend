@@ -534,6 +534,85 @@ def get_home():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api//movies/<int:movie_id>/ratings', methods=['GET'])
+def get_movie_ratings(movie_id):
+    """List all ratings for a movie, with average and per-rating counts."""
+    import traceback
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("""
+            SELECT user_id, rating, timestamp
+            FROM ratings
+            WHERE movie_id = %s
+            ORDER BY timestamp DESC
+        """, (movie_id,))
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+
+        if not rows:
+            return jsonify({
+                "movie_id": movie_id,
+                "average_rating": None,
+                "rating_counts": {},
+                "ratings": []
+            })
+
+        # Compute average rating
+        ratings_list = [row["rating"] for row in rows]
+        avg_rating = sum(ratings_list) / len(ratings_list)
+
+        # Count number of ratings per rounded rating (1-5)
+        rounded_ratings = [round(r) for r in ratings_list]
+        rating_counts = {i: rounded_ratings.count(i) for i in range(1, 6)}
+
+        # Prepare rating details using dict access
+        ratings = [
+            {"user_id": row["user_id"], "rating": row["rating"], "timestamp": row["timestamp"].isoformat()}
+            for row in rows
+        ]
+
+        return jsonify({
+            "movie_id": movie_id,
+            "average_rating": avg_rating,
+            "rating_counts": rating_counts,
+            "ratings": ratings
+        })
+
+    except Exception:
+        import traceback
+        return jsonify({"error": "Failed to fetch ratings", "trace": traceback.format_exc()}), 500
+
+@app.route('/api//movies/<int:movie_id>/ratings', methods=['POST'])
+@require_auth
+def add_movie_rating(movie_id):
+    """Add or update a rating for a movie"""
+    data = request.json
+    if not data or  'rating' not in data:
+        return jsonify({"error": "user_id and rating are required"}), 400
+
+    # get user id from token in headers
+    user_id = request.user_id
+    rating = data['rating']
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO ratings(user_id, movie_id, rating, timestamp)
+            VALUES (%s, %s, %s, now())
+            ON CONFLICT (user_id, movie_id) DO UPDATE
+            SET rating = EXCLUDED.rating, timestamp = now()
+        """, (user_id, movie_id, rating))
+        conn.commit()
+        cur.close()
+        conn.close()
+        return jsonify({"message": "Rating added/updated successfully"}), 201
+    except Exception as e:
+        import traceback
+        return jsonify({"error": "Failed to fetch ratings", "trace": traceback.format_exc()}), 500
+
 
 # Ensure the flask app runs only when this script is executed directly
 if __name__ == "__main__":

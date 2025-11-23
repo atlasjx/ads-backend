@@ -25,6 +25,7 @@ import subprocess
 from pathlib import Path
 from datetime import datetime
 import logging
+from psycopg2.extras import execute_values
 
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -187,8 +188,8 @@ def get_schema_sql():
         id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
         user_id INTEGER,
         movie_id INTEGER,
-        rating REAL NOT NULL CHECK (rating >= 0 AND rating <= 10),
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        rating REAL NOT NULL,
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(user_id, movie_id)
     );
@@ -294,12 +295,43 @@ def movies_table_has_data(conn) -> bool:
         logging.debug(f"Could not check if 'movies' table has data: {e}")
         return False
 
-def load_movies_to_postgres(csv_path, conn):
-    """Load movies from CSV file into Postgres database and populate genres tables."""
+import csv
+import json
+import logging
+
+def load_movies_and_ratings(movies_csv_path, ratings_csv_path, conn):
+    """
+    Load movies, genres, and ratings efficiently using batch inserts.
+    """
     cur = conn.cursor()
 
-    with open(csv_path, newline='', encoding='utf-8') as csvfile:
-        reader = csv.DictReader(csvfile)
+    # ----------------------------
+    # Step 1: Load ratings CSV into memory map
+    # ----------------------------
+    logging.info("Loading ratings into memory...")
+    ratings_map = {}  # key: old CSV movieId, value: list of (user_id, rating, timestamp)
+    with open(ratings_csv_path, newline='', encoding='utf-8') as ratings_file:
+        reader = csv.DictReader(ratings_file)
+        for row in reader:
+            movie_id = str(row['movieId'])
+            ratings_map.setdefault(movie_id, []).append((
+                int(row['userId']),
+                float(row['rating']),
+                int(row['timestamp'])
+            ))
+
+    # ----------------------------
+    # Step 2: Process movies CSV
+    # ----------------------------
+    logging.info("Processing movies CSV...")
+    movies_to_insert = []
+    movie_id_map = {}  # CSV movie id -> DB movie id
+    genres_to_insert = set()
+    movie_genres_to_insert = []
+    ratings_to_insert = []
+
+    with open(movies_csv_path, newline='', encoding='utf-8') as movies_file:
+        reader = csv.DictReader(movies_file)
         for row_num, row in enumerate(reader, start=1):
             try:
                 # Parse genres
@@ -311,7 +343,7 @@ def load_movies_to_postgres(csv_path, conn):
                     genres_list = []
                     raw_genres = '[]'
 
-                # Sanitize numeric, date, boolean fields
+                # Sanitize fields
                 release_date = parse_date(row.get('release_date', ''))
                 adult = parse_bool(row.get('adult', False))
                 budget = parse_int(row.get('budget', '0'))
@@ -321,54 +353,109 @@ def load_movies_to_postgres(csv_path, conn):
                 vote_average = parse_real(row.get('vote_average', '0'))
                 vote_count = parse_int(row.get('vote_count', '0'))
 
-                # Insert movie
-                cur.execute("""
-                    INSERT INTO movies(
-                        imdb_id, title, original_title, overview,
-                        release_date, adult, budget, revenue, runtime,
-                        popularity, vote_average, vote_count, original_language,
-                        status, tagline, poster_path, raw_genres
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    RETURNING id
-                """, (
+                # Prepare movie tuple
+                movies_to_insert.append((
                     row.get('imdb_id'), row.get('title'), row.get('original_title'),
                     row.get('overview'), release_date, adult, budget, revenue, runtime,
                     popularity, vote_average, vote_count, row.get('original_language'),
                     row.get('status'), row.get('tagline'), row.get('poster_path'),
-                    raw_genres
+                    raw_genres, row['id']  # keep CSV id for mapping later
                 ))
-                movie_id = cur.fetchone()[0]  # get the movie's DB id
 
-                # Insert genres and link to movie
+                # Collect genres
                 for genre in genres_list:
                     genre_id = genre.get('id')
                     genre_name = genre.get('name')
-                    if genre_id is None or genre_name is None:
-                        continue
-
-                    # Insert genre if not exists
-                    cur.execute("""
-                        INSERT INTO genres(id, name)
-                        VALUES (%s, %s)
-                        ON CONFLICT (id) DO NOTHING
-                    """, (genre_id, genre_name))
-
-                    # Link movie to genre
-                    cur.execute("""
-                        INSERT INTO movie_genres(movie_id, genre_id)
-                        VALUES (%s, %s)
-                        ON CONFLICT (movie_id, genre_id) DO NOTHING
-                    """, (movie_id, genre_id))
-
-                conn.commit()  # commit per row
+                    if genre_id and genre_name:
+                        genres_to_insert.add((genre_id, genre_name))
 
             except Exception as e:
-                conn.rollback()
-                logging.error(f"Failed to insert movie id={row.get('id')} at row {row_num}: {e}")
+                logging.error(f"Failed to process movie id={row.get('id')} at row {row_num}: {e}")
 
+    # ----------------------------
+    # Step 3: Insert genres
+    # ----------------------------
+    logging.info(f"Inserting {len(genres_to_insert)} genres...")
+    execute_values(
+        cur,
+        """
+        INSERT INTO genres(id, name) VALUES %s
+        ON CONFLICT (id) DO NOTHING
+        """,
+        list(genres_to_insert)
+    )
+
+    # ----------------------------
+    # Step 4: Insert movies and get DB IDs
+    # ----------------------------
+    logging.info(f"Inserting {len(movies_to_insert)} movies...")
+    movie_id_map = {}
+    for movie in movies_to_insert:
+        cur.execute("""
+            INSERT INTO movies(
+                imdb_id, title, original_title, overview,
+                release_date, adult, budget, revenue, runtime,
+                popularity, vote_average, vote_count, original_language,
+                status, tagline, poster_path, raw_genres
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+        """, movie[:-1])
+        db_movie_id = cur.fetchone()[0]
+        csv_movie_id = movie[-1]
+        movie_id_map[csv_movie_id] = db_movie_id
+
+        # Prepare movie_genres batch
+        raw_genres_list = json.loads(movie[16])
+        for genre in raw_genres_list:
+            genre_id = genre.get('id')
+            if genre_id:
+                movie_genres_to_insert.append((db_movie_id, genre_id))
+
+        # Prepare ratings batch
+        movie_ratings = ratings_map.get(str(csv_movie_id), [])
+        for rating in movie_ratings:
+            ratings_to_insert.append((
+                rating[0], db_movie_id, rating[1], rating[2]
+            ))
+
+    conn.commit()  # commit movies, genres
+
+    # ----------------------------
+    # Step 5: Insert movie_genres
+    # ----------------------------
+    logging.info(f"Inserting {len(movie_genres_to_insert)} movie_genres...")
+    execute_values(
+        cur,
+        """
+        INSERT INTO movie_genres(movie_id, genre_id) VALUES %s
+        ON CONFLICT (movie_id, genre_id) DO NOTHING
+        """,
+        movie_genres_to_insert
+    )
+
+    # ----------------------------
+    # Step 6: Insert ratings
+    # ----------------------------
+
+    #cap ratings to 100k
+    ratings_to_insert = ratings_to_insert[:100000]
+
+    logging.info(f"Inserting {len(ratings_to_insert)} ratings...")
+    execute_values(
+        cur,
+        """
+        INSERT INTO ratings(user_id, movie_id, rating, timestamp)
+        VALUES %s
+        ON CONFLICT (user_id, movie_id) DO UPDATE
+        SET rating = EXCLUDED.rating, timestamp = EXCLUDED.timestamp
+        """,
+        ratings_to_insert,
+        template="(%s, %s, %s, to_timestamp(%s))"
+    )
+
+    conn.commit()
     cur.close()
-    logging.info("Finished loading movies with genres.")
-
+    logging.info("Finished loading movies, genres, and ratings.")
 
 def main():
     parser = argparse.ArgumentParser(description='Setup movies database')
@@ -423,7 +510,8 @@ def main():
                 host=DB_HOST, port=DB_PORT, dbname=DB_NAME,
                 user=DB_USER, password=DB_PASS
             )
-            load_movies_to_postgres(csv_path, conn)
+            load_movies_and_ratings(csv_path,Path(args.data_dir) / "ratings.csv", conn)
+
             conn.close()
 
             logging.info("Data successfully loaded into Postgres!")
