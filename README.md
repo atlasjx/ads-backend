@@ -1,3 +1,8 @@
+docker compose exec db psql -U movies_user -d movies_db -c "SELECT count(*) FROM movies;"
+docker compose exec db psql -U movies_user -d movies_db -c "SELECT id, title FROM movies LIMIT 10;"
+CLEAR DB: docker compose down --volumes
+
+
 # ads-backend
 
 This repository contains a minimal Flask API and scripts to populate a movies database from the Kaggle "The Movies Dataset" CSV. It supports two population modes:

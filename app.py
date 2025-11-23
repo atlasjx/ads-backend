@@ -172,30 +172,79 @@ def login():
 
 @app.route("/api/movies", methods=['GET'])
 def get_movies():
-    """Browse catalog with pagination"""
+    """Browse catalog with pagination, genre filter, and sorting"""
     page = request.args.get('page', 1, type=int)
     limit = request.args.get('limit', 20, type=int)
+    genre = request.args.get('genre', None)        # e.g. "Action"
+    sort = request.args.get('sort', "popularity") # default sort
     offset = (page - 1) * limit
+
+    # Allowed sort mappings
+    sort_map = {
+        "title_asc": "title ASC",
+        "title_desc": "title DESC",
+        "rating_desc": "vote_average DESC",
+        "rating_asc": "vote_average ASC",
+        "date_new": "release_date DESC",
+        "date_old": "release_date ASC",
+        "popularity": "popularity DESC"
+    }
+
+    order_clause = sort_map.get(sort, "popularity DESC")
 
     try:
         conn = get_db_connection()
         cur = conn.cursor()
 
-        # Get movies with pagination
-        cur.execute(
+        # Base query
+        base_query = """
+            SELECT m.id, m.imdb_id, m.title, m.overview, m.release_date,
+                   m.popularity, m.vote_average, m.vote_count, m.poster_path
+            FROM movies m
+        """
+
+        where_clauses = []
+        params = []
+
+        # Handle genre filtering if provided
+        if genre and genre.lower() != "all":
+            base_query += """
+                JOIN movie_genres mg ON m.id = mg.movie_id
+                JOIN genres g ON mg.genre_id = g.id
             """
-            SELECT id, imdb_id, title, overview, release_date, 
-                   popularity, vote_average, vote_count, poster_path
-            FROM movies
-            ORDER BY popularity DESC
+            where_clauses.append("g.name = %s")
+            params.append(genre)
+
+        # Build WHERE clause
+        if where_clauses:
+            base_query += " WHERE " + " AND ".join(where_clauses)
+
+        # Final SQL with sorting + pagination
+        final_query = f"""
+            {base_query}
+            ORDER BY {order_clause}
             LIMIT %s OFFSET %s
-            """,
-            (limit, offset)
-        )
+        """
+
+        params.extend([limit, offset])
+
+        cur.execute(final_query, params)
         movies = cur.fetchall()
 
-        # Get total count
-        cur.execute("SELECT COUNT(*) as count FROM movies")
+        # Count for pagination
+        count_query = "SELECT COUNT(*) FROM movies"
+        if genre and genre.lower() != "all":
+            count_query = """
+                SELECT COUNT(*)
+                FROM movies m
+                JOIN movie_genres mg ON m.id = mg.movie_id
+                JOIN genres g ON mg.genre_id = g.id
+                WHERE g.name = %s
+            """
+            cur.execute(count_query, (genre,))
+        else:
+            cur.execute(count_query)
+
         total = cur.fetchone()['count']
 
         cur.close()
@@ -244,7 +293,7 @@ def insert_movie():
             data
         )
 
-        movie_id = cur.fetchone()[0]  # fetch the auto-generated ID
+        movie_id = cur.fetchone()['id']
 
         conn.commit()
         cur.close()
@@ -256,43 +305,85 @@ def insert_movie():
         }), 201
 
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        import traceback
+        return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
 
 @app.route("/api/movies/search", methods=['GET'])
 def search_movies():
-    """Search functionality"""
+    """Search functionality with genre filter and sorting"""
     query = request.args.get('q', '')
     page = request.args.get('page', 1, type=int)
     limit = request.args.get('limit', 20, type=int)
+    genre = request.args.get('genre', None)
+    sort = request.args.get('sort', "popularity")
     offset = (page - 1) * limit
 
-    if not query:
-        return jsonify({'error': 'Search query is required'}), 400
+    # Allowed sort mappings
+    sort_map = {
+        "title_asc": "title ASC",
+        "title_desc": "title DESC",
+        "rating_desc": "vote_average DESC",
+        "rating_asc": "vote_average ASC",
+        "date_new": "release_date DESC",
+        "date_old": "release_date ASC",
+        "popularity": "popularity DESC"
+    }
+    order_clause = sort_map.get(sort, "popularity DESC")
 
     try:
         conn = get_db_connection()
         cur = conn.cursor()
 
-        # Search movies by title or overview
-        search_pattern = f"%{query}%"
-        cur.execute(
+        # Base query
+        base_query = """
+            SELECT m.id, m.imdb_id, m.title, m.overview, m.release_date,
+                   m.popularity, m.vote_average, m.vote_count, m.poster_path
+            FROM movies m
+        """
+
+        where_clauses = ["(m.title ILIKE %s OR m.overview ILIKE %s)"]
+        params = [f"%{query}%", f"%{query}%"]
+
+        # Handle genre filtering if provided
+        if genre and genre.lower() != "all":
+            base_query += """
+                JOIN movie_genres mg ON m.id = mg.movie_id
+                JOIN genres g ON mg.genre_id = g.id
             """
-            SELECT id, imdb_id, title, overview, release_date,
-                   popularity, vote_average, vote_count, poster_path
-            FROM movies
-            WHERE title ILIKE %s OR overview ILIKE %s
-            ORDER BY popularity DESC
+            where_clauses.append("g.name = %s")
+            params.append(genre)
+
+        # Build WHERE clause
+        if where_clauses:
+            base_query += " WHERE " + " AND ".join(where_clauses)
+
+        # Final SQL with sorting + pagination
+        final_query = f"""
+            {base_query}
+            ORDER BY {order_clause}
             LIMIT %s OFFSET %s
-            """,
-            (search_pattern, search_pattern, limit, offset)
-        )
+        """
+        params.extend([limit, offset])
+
+        cur.execute(final_query, params)
         movies = cur.fetchall()
 
-        # Get total count
-        cur.execute(
-            "SELECT COUNT(*) as count FROM movies WHERE title ILIKE %s OR overview ILIKE %s",
-            (search_pattern, search_pattern)
-        )
+        # Count for pagination
+        count_query = "SELECT COUNT(*) FROM movies m"
+        count_params = []
+
+        if genre and genre.lower() != "all":
+            count_query += """
+                JOIN movie_genres mg ON m.id = mg.movie_id
+                JOIN genres g ON mg.genre_id = g.id
+                WHERE (m.title ILIKE %s OR m.overview ILIKE %s) AND g.name = %s
+            """
+            count_params = [f"%{query}%", f"%{query}%", genre]
+        else:
+            count_query += " WHERE m.title ILIKE %s OR m.overview ILIKE %s"
+            count_params = [f"%{query}%", f"%{query}%"]
+
+        cur.execute(count_query, count_params)
         total = cur.fetchone()['count']
 
         cur.close()
@@ -301,6 +392,8 @@ def search_movies():
         return jsonify({
             'movies': movies,
             'query': query,
+            'genre': genre,
+            'sort': sort,
             'page': page,
             'limit': limit,
             'total': total,
