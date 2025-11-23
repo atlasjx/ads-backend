@@ -295,27 +295,21 @@ def movies_table_has_data(conn) -> bool:
         return False
 
 def load_movies_to_postgres(csv_path, conn):
-    """Load movies from CSV file into Postgres database."""
+    """Load movies from CSV file into Postgres database and populate genres tables."""
     cur = conn.cursor()
 
     with open(csv_path, newline='', encoding='utf-8') as csvfile:
         reader = csv.DictReader(csvfile)
         for row_num, row in enumerate(reader, start=1):
             try:
-                # Convert JSON-like columns
+                # Parse genres
                 try:
-                    raw_genres = json.dumps(eval(row['genres'])) if row.get('genres') else '[]'
+                    genres_list = eval(row['genres']) if row.get('genres') else []
+                    raw_genres = json.dumps(genres_list)
                 except Exception as e:
                     logging.warning(f"Row {row_num}: Failed to parse genres. Using empty list. Error: {e}")
+                    genres_list = []
                     raw_genres = '[]'
-
-                try:
-                    raw_production_companies = json.dumps(eval(row['production_companies'])) if row.get(
-                        'production_companies') else '[]'
-                except Exception as e:
-                    logging.warning(
-                        f"Row {row_num}: Failed to parse production_companies. Using empty list. Error: {e}")
-                    raw_production_companies = '[]'
 
                 # Sanitize numeric, date, boolean fields
                 release_date = parse_date(row.get('release_date', ''))
@@ -327,31 +321,53 @@ def load_movies_to_postgres(csv_path, conn):
                 vote_average = parse_real(row.get('vote_average', '0'))
                 vote_count = parse_int(row.get('vote_count', '0'))
 
-                # Insert row
+                # Insert movie
                 cur.execute("""
                     INSERT INTO movies(
                         imdb_id, title, original_title, overview,
                         release_date, adult, budget, revenue, runtime,
                         popularity, vote_average, vote_count, original_language,
-                        status, tagline, poster_path, raw_genres, raw_production_companies
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (id) DO UPDATE SET title = EXCLUDED.title
+                        status, tagline, poster_path, raw_genres
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id
                 """, (
                     row.get('imdb_id'), row.get('title'), row.get('original_title'),
                     row.get('overview'), release_date, adult, budget, revenue, runtime,
                     popularity, vote_average, vote_count, row.get('original_language'),
                     row.get('status'), row.get('tagline'), row.get('poster_path'),
-                    raw_genres, raw_production_companies
+                    raw_genres
                 ))
+                movie_id = cur.fetchone()[0]  # get the movie's DB id
+
+                # Insert genres and link to movie
+                for genre in genres_list:
+                    genre_id = genre.get('id')
+                    genre_name = genre.get('name')
+                    if genre_id is None or genre_name is None:
+                        continue
+
+                    # Insert genre if not exists
+                    cur.execute("""
+                        INSERT INTO genres(id, name)
+                        VALUES (%s, %s)
+                        ON CONFLICT (id) DO NOTHING
+                    """, (genre_id, genre_name))
+
+                    # Link movie to genre
+                    cur.execute("""
+                        INSERT INTO movie_genres(movie_id, genre_id)
+                        VALUES (%s, %s)
+                        ON CONFLICT (movie_id, genre_id) DO NOTHING
+                    """, (movie_id, genre_id))
 
                 conn.commit()  # commit per row
 
             except Exception as e:
-                conn.rollback()  # rollback only this row
+                conn.rollback()
                 logging.error(f"Failed to insert movie id={row.get('id')} at row {row_num}: {e}")
 
     cur.close()
-    logging.info("Finished loading movies.")
+    logging.info("Finished loading movies with genres.")
 
 
 def main():
