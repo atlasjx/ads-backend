@@ -180,6 +180,7 @@ def get_schema_sql():
         username TEXT UNIQUE NOT NULL,
         email TEXT UNIQUE NOT NULL,
         password_hash TEXT NOT NULL,
+        role TEXT DEFAULT 'user' NOT NULL CHECK (role IN ('user', 'admin')),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
@@ -209,6 +210,41 @@ def apply_schema(conn):
 
     conn.commit()
     cur.close()
+
+
+def create_admin_user(conn):
+    """Create default admin user if it doesn't exist."""
+    import hashlib
+    
+    admin_username = os.environ.get('ADMIN_USERNAME', 'admin')
+    admin_email = os.environ.get('ADMIN_EMAIL', 'admin@example.com')
+    admin_password = os.environ.get('ADMIN_PASSWORD', 'admin123')
+    
+    password_hash = hashlib.sha256(admin_password.encode()).hexdigest()
+    
+    cur = conn.cursor()
+    
+    cur.execute("SELECT id FROM users WHERE username = %s OR email = %s", (admin_username, admin_email))
+    if cur.fetchone():
+        logging.info(f"Admin user '{admin_username}' already exists. Skipping creation.")
+        cur.close()
+        return
+    
+    try:
+        cur.execute(
+            "INSERT INTO users (username, email, password_hash, role) VALUES (%s, %s, %s, 'admin') RETURNING id",
+            (admin_username, admin_email, password_hash)
+        )
+        admin_id = cur.fetchone()[0]
+        conn.commit()
+        logging.info(f"Admin user '{admin_username}' created successfully (ID: {admin_id})")
+        logging.info(f"Admin credentials - Username: {admin_username}, Email: {admin_email}")
+        logging.warning(f"Default admin password is '{admin_password}'. Please change it after first login!")
+    except Exception as e:
+        logging.error(f"Failed to create admin user: {e}")
+        conn.rollback()
+    finally:
+        cur.close()
 
 
 def ensure_database_exists():
@@ -487,7 +523,10 @@ def main():
         # Step 5: Apply schema
         apply_schema(conn)
 
-        # Step 6: Check if movies table has data
+        # Step 6: Create admin user
+        create_admin_user(conn)
+
+        # Step 7: Check if movies table has data
         if movies_table_has_data(conn):
             logging.info("Movies table already has data. Skipping data load.")
             conn.close()

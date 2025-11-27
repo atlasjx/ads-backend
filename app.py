@@ -6,6 +6,7 @@ from psycopg2.extras import RealDictCursor
 import hashlib
 import secrets
 import os
+import re
 
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": "*"}})
@@ -48,6 +49,29 @@ def hash_password(password):
 def generate_token():
     """Generate a secure random token"""
     return secrets.token_urlsafe(32)
+
+
+def validate_email(email):
+    """Validate email format using regex"""
+    pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    return re.match(pattern, email) is not None
+
+
+def validate_password(password):
+    """Validate password meets security requirements"""
+    if len(password) < 8:
+        return False, "Password must be at least 8 characters long"
+    
+    if not re.search(r'[a-z]', password):
+        return False, "Password must contain at least one lowercase letter"
+    
+    if not re.search(r'[A-Z]', password):
+        return False, "Password must contain at least one uppercase letter"
+    
+    if not re.search(r'[!@#$%^&*(),.?":{}|<>]', password):
+        return False, "Password must contain at least one special character"
+    
+    return True, None
 
 
 def require_auth(f):
@@ -93,6 +117,13 @@ def register():
     email = data['email']
     password = data['password']
 
+    if not validate_email(email):
+        return jsonify({'error': 'Invalid email format'}), 400
+
+    is_valid, error_message = validate_password(password)
+    if not is_valid:
+        return jsonify({'error': error_message}), 400
+
     # Hash password
     password_hash = hash_password(password)
 
@@ -100,9 +131,9 @@ def register():
         conn = get_db_connection()
         cur = conn.cursor()
 
-        # Insert new user
+        # Insert new user (role defaults to 'user' in database)
         cur.execute(
-            "INSERT INTO users (username, email, password_hash) VALUES (%s, %s, %s) RETURNING id",
+            "INSERT INTO users (username, email, password_hash, role) VALUES (%s, %s, %s, 'user') RETURNING id",
             (username, email, password_hash)
         )
         user_id = cur.fetchone()['id']
@@ -117,7 +148,13 @@ def register():
         }), 201
 
     except psycopg2.IntegrityError as e:
-        return jsonify({'error': f'Username or email already exists,{e}'}), 409
+        error_msg = str(e)
+        if 'users_username_key' in error_msg or 'username' in error_msg.lower():
+            return jsonify({'error': 'Username already exists'}), 409
+        elif 'users_email_key' in error_msg or 'email' in error_msg.lower():
+            return jsonify({'error': 'Email already exists'}), 409
+        else:
+            return jsonify({'error': 'Username or email already exists'}), 409
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -141,7 +178,7 @@ def login():
 
         # Check credentials
         cur.execute(
-            "SELECT id, username, email FROM users WHERE username = %s AND password_hash = %s",
+            "SELECT id, username, email, role FROM users WHERE username = %s AND password_hash = %s",
             (username, password_hash)
         )
         user = cur.fetchone()
@@ -162,12 +199,28 @@ def login():
             'user': {
                 'id': user['id'],
                 'username': user['username'],
-                'email': user['email']
+                'email': user['email'],
+                'role': user['role']
             }
         }), 200
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+@app.route("/api/auth/logout", methods=['POST'])
+@require_auth
+def logout():
+    """User logout endpoint"""
+    token = request.headers.get('Authorization')
+    if token and token.startswith('Bearer '):
+        token = token[7:]
+    
+    if token in active_tokens:
+        del active_tokens[token]
+        return jsonify({'message': 'Logout successful'}), 200
+    else:
+        return jsonify({'message': 'Logout successful'}), 200
 
 
 @app.route("/api/movies", methods=['GET'])
