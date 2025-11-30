@@ -666,6 +666,78 @@ def add_movie_rating(movie_id):
         import traceback
         return jsonify({"error": "Failed to fetch ratings", "trace": traceback.format_exc()}), 500
 
+@app.route('/api/profile', methods=['GET'])
+@require_auth
+def get_profile():
+    """
+    Get authenticated user's profile data (details and recent ratings).
+    Requires a valid Authorization Bearer token.
+    """
+    # user_id is set by the @require_auth decorator
+    user_id = request.user_id 
+    
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        # 1. Fetch User Details
+        cur.execute(
+            "SELECT id, username, email, role, created_at FROM users WHERE id = %s",
+            (user_id,)
+        )
+        user_data = cur.fetchone()
+
+        if not user_data:
+            cur.close()
+            conn.close()
+            # This should ideally not happen if authentication passed
+            return jsonify({'error': 'User not found'}), 404
+
+        # 2. Fetch User's Recent Ratings
+        cur.execute(
+            """
+            SELECT r.rating, r.updated_at, m.title, m.poster_path, m.id AS movie_id
+            FROM ratings r
+            JOIN movies m ON r.movie_id = m.id
+            WHERE r.user_id = %s
+            ORDER BY r.updated_at DESC
+            LIMIT 10
+            """,
+            (user_id,)
+        )
+        recent_ratings = cur.fetchall()
+
+        cur.close()
+        conn.close()
+
+        # Format the response
+        response = {
+            'user': {
+                'id': user_data['id'],
+                'username': user_data['username'],
+                'email': user_data['email'],
+                'role': user_data['role'],
+                'created_at': user_data['created_at'].isoformat()
+            },
+            'recent_ratings': [
+                {
+                    'rating': r['rating'],
+                    'rated_at': r['updated_at'].isoformat(),
+                    'movie_title': r['title'],
+                    'movie_id': r['movie_id'],
+                    'poster_path': r['poster_path']
+                } for r in recent_ratings
+            ]
+        }
+        
+        return jsonify(response), 200
+
+    except Exception as e:
+        import traceback
+        return jsonify({'error': 'Failed to fetch profile data', 'details': str(e), 'trace': traceback.format_exc()}), 500
+    
+
+
 
 # Ensure the flask app runs only when this script is executed directly
 if __name__ == "__main__":

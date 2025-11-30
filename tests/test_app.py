@@ -60,8 +60,10 @@ def test_register_user(test_user):
     """Test user registration endpoint."""
     res = requests.post(f"{API}/auth/register", json=test_user)
     data = res.json()
-
+    print("Register user -->", data)
     pretty("REGISTER RESPONSE", data)
+
+   
 
     # Accept 201 (success) or 409 (already exists)
     assert res.status_code in (201, 409)
@@ -219,3 +221,60 @@ def test_home_feed_unauthenticated():
 
     assert "popular" in data
     assert "recent" in data
+
+
+# -----------------------------------
+# Profile Tests
+# -----------------------------------
+
+def test_get_profile_authenticated(token, test_user, test_movie_id):
+    """
+    Test retrieving authenticated user profile data.
+    Requires:
+    1. A valid 'token' from the login fixture.
+    2. The 'test_user' data to verify returned username/email.
+    3. The 'test_movie_id' to ensure a rating exists for the 'recent_ratings' list.
+    """
+    headers = {"Authorization": f"Bearer {token}"}
+    
+    # 1. Ensure the test user has a rating (if not already done by other tests)
+    # This guarantees the 'recent_ratings' list is not empty for assertion.
+    rating_res = requests.post(
+        f"{API}/movie/{test_movie_id}/rating",
+        json={"rating": 9.5},
+        headers=headers
+    )
+    # Assert successful rating insert/update
+    assert rating_res.status_code in (200, 201), "Precondition failed: Could not submit test rating."
+    
+    # 2. Get the profile
+    res = requests.get(f"{API}/profile", headers=headers)
+    data = res.json()
+
+    pretty("GET PROFILE RESPONSE", data)
+
+    # Assert successful request
+    assert res.status_code == 200
+    
+    # Assert top-level structure
+    assert "user" in data
+    assert "recent_ratings" in data
+    
+    # Assert user data integrity
+    assert data["user"]["username"] == test_user["username"]
+    assert data["user"]["email"] == test_user["email"]
+    
+    # Assert recent ratings contain the rating we just submitted
+    assert len(data["recent_ratings"]) >= 1
+    
+    # Check if the rating submitted is in the list
+    rated_movie_ids = [r["movie_id"] for r in data["recent_ratings"]]
+    assert test_movie_id in rated_movie_ids
+    
+    # Check the format of a recent rating entry
+    if data["recent_ratings"]:
+        first_rating = data["recent_ratings"][0]
+        assert "rating" in first_rating
+        assert "movie_title" in first_rating
+        assert "rated_at" in first_rating
+        assert "poster_path" in first_rating
