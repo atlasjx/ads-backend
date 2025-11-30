@@ -79,6 +79,14 @@ def test_login_user(test_user):
 
     assert "token" in data
 
+def test_logout_success(token):
+    """Test successful logout"""
+    headers = {"Authorization": f"Bearer {token}"}
+    
+    res = requests.post(f"{API}/auth/logout", headers=headers)
+    
+    assert res.status_code == 200
+    assert res.json()["message"] == "Logout successful"
 
 def test_get_movies():
     """Test movie browsing endpoint."""
@@ -171,6 +179,36 @@ def test_home_feed(token):
     assert "popular" in data
     assert "recent" in data
 
+def test_get_movie_ratings(test_movie_id):
+    """Test getting ratings for a movie endpoint."""
+    
+    res = requests.get(f"{API}//movies/{test_movie_id}/ratings")
+    data = res.json()
+
+    pretty("GET MOVIE RATINGS RESPONSE", data)
+
+    assert res.status_code == 200
+    assert "movie_id" in data
+    assert "average_rating" in data
+    assert "rating_counts" in data
+    assert "ratings" in data
+
+def test_add_movie_rating(token, test_movie_id):
+    """Test adding or updating a movie rating endpoint."""
+    headers = {"Authorization": f"Bearer {token}"}
+
+    res = requests.post(
+        f"{API}//movies/{test_movie_id}/ratings",
+        json={"rating": 8},
+        headers=headers
+    )
+
+    data = res.json()
+
+    pretty("ADD MOVIE RATING RESPONSE", data)
+
+    assert res.status_code == 201
+    assert "message" in data
 
 def test_home_feed_unauthenticated():
     """Ensure unauthenticated home feed still works."""
