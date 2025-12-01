@@ -736,6 +736,112 @@ def get_profile():
         import traceback
         return jsonify({'error': 'Failed to fetch profile data', 'details': str(e), 'trace': traceback.format_exc()}), 500
     
+@app.route('/api/profile', methods=['PUT'])
+@require_auth
+def update_profile():
+    """
+    Update authenticated user's profile data (username, email) and
+    allows editing of recent ratings provided in the request body.
+    Requires a valid Authorization Bearer token.
+    """
+    user_id = request.user_id 
+    data = request.get_json()
+
+    if not data:
+        return jsonify({'error': 'Missing data in request body'}), 400
+
+    username = data.get('username')
+    email = data.get('email')
+    ratings_to_update = data.get('recent_ratings', []) # Lista de {movie_id, rating}
+    
+    update_clauses = []
+    params = []
+    updated_ratings_count = 0
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        # 1. Atualizar Detalhes do Usuário (Username e Email)
+        if username or email:
+            
+            # Validação
+            if username and username.strip() == "":
+                return jsonify({'error': 'Username cannot be empty'}), 400
+            if email and not validate_email(email):
+                return jsonify({'error': 'Invalid email format'}), 400
+            
+            # Construção da Query
+            if username:
+                update_clauses.append("username = %s")
+                params.append(username)
+            if email:
+                update_clauses.append("email = %s")
+                params.append(email)
+
+            update_clauses.append("updated_at = NOW()")
+
+            sql_query = f"UPDATE users SET {', '.join(update_clauses)} WHERE id = %s RETURNING id, username, email, role"
+            params.append(user_id)
+
+            cur.execute(sql_query, params)
+            updated_user = cur.fetchone()
+        else:
+            # Se não houver campos de usuário para atualizar, buscamos os dados atuais para o retorno
+            cur.execute("SELECT id, username, email, role FROM users WHERE id = %s", (user_id,))
+            updated_user = cur.fetchone()
+        
+        if not updated_user:
+            conn.close()
+            return jsonify({'error': 'User not found'}), 404
+
+        # 2. Atualizar Avaliações (Ratings)
+        for rating_data in ratings_to_update:
+            movie_id = rating_data.get('movie_id')
+            rating = rating_data.get('rating')
+
+            if movie_id is not None and rating is not None and (0 <= rating <= 10):
+                # Usamos a lógica ON CONFLICT DO UPDATE (upsert) para garantir que a avaliação seja inserida/atualizada
+                cur.execute(
+                    """
+                    INSERT INTO ratings (user_id, movie_id, rating, updated_at)
+                    VALUES (%s, %s, %s, NOW())
+                    ON CONFLICT (user_id, movie_id) 
+                    DO UPDATE SET rating = %s, updated_at = NOW()
+                    """,
+                    (user_id, movie_id, rating, rating)
+                )
+                updated_ratings_count += 1
+            elif rating is not None and not (0 <= rating <= 10):
+                # Se a avaliação estiver fora do intervalo permitido, retornamos um erro específico
+                 return jsonify({'error': f'Invalid rating value ({rating}) for movie ID {movie_id}. Rating must be between 0 and 10'}), 400
+        
+        # 3. Commit e Retorno
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        return jsonify({
+            'message': 'Profile and ratings updated successfully',
+            'user': updated_user,
+            'ratings_updated_count': updated_ratings_count
+        }), 200
+
+    except psycopg2.IntegrityError as e:
+        conn.rollback()
+        # Tratamento de erros de unicidade (username ou email já existem)
+        error_msg = str(e)
+        if 'users_username_key' in error_msg or 'username' in error_msg.lower():
+            return jsonify({'error': 'Username already taken'}), 409
+        elif 'users_email_key' in error_msg or 'email' in error_msg.lower():
+            return jsonify({'error': 'Email already taken'}), 409
+        else:
+            return jsonify({'error': 'Integrity constraint violation'}), 409
+            
+    except Exception as e:
+        import traceback
+        return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
+    
 
 
 
