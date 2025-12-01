@@ -682,7 +682,7 @@ def get_profile():
 
         # 1. Fetch User Details
         cur.execute(
-            "SELECT id, username, email, role, created_at FROM users WHERE id = %s",
+            "SELECT id, username, email, role, created_at, profile_picture_path FROM users WHERE id = %s",
             (user_id,)
         )
         user_data = cur.fetchone()
@@ -717,7 +717,8 @@ def get_profile():
                 'username': user_data['username'],
                 'email': user_data['email'],
                 'role': user_data['role'],
-                'created_at': user_data['created_at'].isoformat()
+                'created_at': user_data['created_at'].isoformat(),
+                'profile_picture_path': user_data['profile_picture_path']
             },
             'recent_ratings': [
                 {
@@ -752,6 +753,7 @@ def update_profile():
 
     username = data.get('username')
     email = data.get('email')
+    profile_picture_path = data.get('profile_picture_path')
     ratings_to_update = data.get('recent_ratings', []) # Lista de {movie_id, rating}
     
     update_clauses = []
@@ -763,7 +765,7 @@ def update_profile():
         cur = conn.cursor()
 
         # 1. Atualizar Detalhes do Usuário (Username e Email)
-        if username or email:
+        if username or email or profile_picture_path:
             
             # Validação
             if username and username.strip() == "":
@@ -778,17 +780,21 @@ def update_profile():
             if email:
                 update_clauses.append("email = %s")
                 params.append(email)
+            if profile_picture_path:
+                update_clauses.append("profile_picture_path = %s")
+                params.append(profile_picture_path)
+            
 
             update_clauses.append("updated_at = NOW()")
 
-            sql_query = f"UPDATE users SET {', '.join(update_clauses)} WHERE id = %s RETURNING id, username, email, role"
+            sql_query = f"UPDATE users SET {', '.join(update_clauses)} WHERE id = %s RETURNING id, username, email, role, profile_picture_path"
             params.append(user_id)
 
             cur.execute(sql_query, params)
             updated_user = cur.fetchone()
         else:
             # Se não houver campos de usuário para atualizar, buscamos os dados atuais para o retorno
-            cur.execute("SELECT id, username, email, role FROM users WHERE id = %s", (user_id,))
+            cur.execute("SELECT id, username, email, role, profile_picture_path FROM users WHERE id = %s", (user_id,))
             updated_user = cur.fetchone()
         
         if not updated_user:

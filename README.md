@@ -2,6 +2,8 @@ docker compose exec db psql -U movies_user -d movies_db -c "SELECT count(*) FROM
 docker compose exec db psql -U movies_user -d movies_db -c "SELECT id, title FROM movies LIMIT 10;"
 CLEAR DB: docker compose down --volumes
 
+docker compose exec db psql -U movies_user -d movies_db -c "\d users"
+
 
 # ads-backend
 

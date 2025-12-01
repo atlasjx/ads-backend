@@ -181,6 +181,7 @@ def get_schema_sql():
         email TEXT UNIQUE NOT NULL,
         password_hash TEXT NOT NULL,
         role TEXT DEFAULT 'user' NOT NULL CHECK (role IN ('user', 'admin')),
+        profile_picture_path TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
