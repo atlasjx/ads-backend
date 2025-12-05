@@ -478,7 +478,7 @@ def submit_rating(movie_id):
         # Insert or update rating
         cur.execute(
             """
-            INSERT INTO ratings (user_id, movie_id, rating, created_at, updated_at)
+            INSERT INTO ratings (user_id, movie_id, rating, timestamp, updated_at)
             VALUES (%s, %s, %s, NOW(), NOW())
             ON CONFLICT (user_id, movie_id) 
             DO UPDATE SET rating = %s, updated_at = NOW()
