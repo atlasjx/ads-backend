@@ -332,10 +332,6 @@ def movies_table_has_data(conn) -> bool:
         logging.debug(f"Could not check if 'movies' table has data: {e}")
         return False
 
-import csv
-import json
-import logging
-
 def load_movies_and_ratings(movies_csv_path, ratings_csv_path, conn):
     """
     Load movies, genres, and ratings efficiently using batch inserts.

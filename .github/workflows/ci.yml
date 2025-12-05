@@ -30,11 +30,16 @@ jobs:
           "$PYTHON_EXEC" -m pip install --upgrade "pip>=25.3" "setuptools>=78.1.1" wheel
           "$PYTHON_EXEC" -m pip install -r requirements.txt -c constraints.txt
           "$PYTHON_EXEC" -m pip install --upgrade pip-audit
+          "$PYTHON_EXEC" -m pip install xenon
 
       - name: Ruff Linter
         uses: astral-sh/ruff-action@v3
         with:
           src: "."
+
+      - name: Run Xenon (code complexity)
+        run: |
+          xenon . -b D -m C -a C --exclude tests
 
       - name: Perform Bandit Analysis
         uses: PyCQA/bandit-action@v1

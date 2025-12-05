@@ -662,7 +662,7 @@ def add_movie_rating(movie_id):
         cur.close()
         conn.close()
         return jsonify({"message": "Rating added/updated successfully"}), 201
-    except Exception as e:
+    except Exception:
         import traceback
         return jsonify({"error": "Failed to fetch ratings", "trace": traceback.format_exc()}), 500
 
