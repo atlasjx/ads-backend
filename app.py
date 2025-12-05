@@ -232,7 +232,7 @@ def get_movies():
     sort = request.args.get('sort', "popularity") # default sort
     offset = (page - 1) * limit
 
-    # Allowed sort mappings
+    # Allowed sort mappings (MANTIDO)
     sort_map = {
         "title_asc": "title ASC",
         "title_desc": "title DESC",
@@ -242,39 +242,43 @@ def get_movies():
         "date_old": "release_date ASC",
         "popularity": "popularity DESC"
     }
-
     order_clause = sort_map.get(sort, "popularity DESC")
 
     try:
         conn = get_db_connection()
         cur = conn.cursor()
 
-        # Base query
+        # 1. Base Query CORRIGIDA com ARRAY_AGG e GROUP BY
         base_query = """
-            SELECT m.id, m.imdb_id, m.title, m.overview, m.release_date,
-                   m.popularity, m.vote_average, m.vote_count, m.poster_path
+            SELECT 
+                m.id, m.imdb_id, m.title, m.overview, m.release_date,
+                m.popularity, m.vote_average, m.vote_count, m.poster_path,
+                -- Agrega todos os nomes de gênero em um array para cada filme
+                ARRAY_AGG(g.name) AS genres 
             FROM movies m
+            JOIN movie_genres mg ON m.id = mg.movie_id
+            JOIN genres g ON mg.genre_id = g.id
         """
 
         where_clauses = []
         params = []
-
+        
+        # 2. Lógica de Filtro por Gênero (MANTIDA)
         # Handle genre filtering if provided
         if genre and genre.lower() != "all":
-            base_query += """
-                JOIN movie_genres mg ON m.id = mg.movie_id
-                JOIN genres g ON mg.genre_id = g.id
-            """
+            # Para filtrar por um gênero, precisamos garantir que o filme tenha aquele gênero.
+            # Adicionamos a condição WHERE, mas não precisamos repetir os JOINs.
             where_clauses.append("g.name = %s")
             params.append(genre)
 
         # Build WHERE clause
         if where_clauses:
             base_query += " WHERE " + " AND ".join(where_clauses)
-
-        # Final SQL with sorting + pagination
+        
+        # 3. Adiciona o GROUP BY para que ARRAY_AGG funcione
         final_query = f"""
             {base_query}
+            GROUP BY m.id
             ORDER BY {order_clause}
             LIMIT %s OFFSET %s
         """
@@ -284,18 +288,20 @@ def get_movies():
         cur.execute(final_query, params)
         movies = cur.fetchall()
 
-        # Count for pagination
-        count_query = "SELECT COUNT(*) FROM movies"
+        # 4. Count Query (REQUER MUDANÇA se o filtro de gênero estiver ativo)
+        # Se o filtro de gênero estiver ativo, a contagem deve contar filmes (m.id) distintos
         if genre and genre.lower() != "all":
-            count_query = """
-                SELECT COUNT(*)
+             count_query = """
+                SELECT COUNT(DISTINCT m.id)
                 FROM movies m
                 JOIN movie_genres mg ON m.id = mg.movie_id
                 JOIN genres g ON mg.genre_id = g.id
                 WHERE g.name = %s
             """
-            cur.execute(count_query, (genre,))
+             cur.execute(count_query, (genre,))
         else:
+            # Se não há filtro de gênero, a contagem é simples (MANTIDO)
+            count_query = "SELECT COUNT(*) FROM movies"
             cur.execute(count_query)
 
         total = cur.fetchone()['count']
@@ -312,8 +318,10 @@ def get_movies():
         }), 200
 
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
+        # Import traceback para debug mais detalhado (opcional)
+        import traceback
+        return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
+    
 
 @app.route("/api/movies", methods=['POST'])
 @require_auth
@@ -506,14 +514,14 @@ def submit_rating(movie_id):
 @app.route("/api/home", methods=['GET'])
 def get_home():
     """Get main catalog with recommendation system"""
-    user_id = None
+    '''user_id = None
 
     # Check if user is authenticated
     token = request.headers.get('Authorization')
     if token:
         if token.startswith('Bearer '):
             token = token[7:]
-        user_id = active_tokens.get(token)
+        user_id = active_tokens.get(token)'''
 
     try:
         conn = get_db_connection()
@@ -547,7 +555,7 @@ def get_home():
         recommended_movies = []
 
         # If user is authenticated, get personalized recommendations
-        if user_id:
+        '''if user_id:
             # Simple recommendation: movies from genres user has rated highly
             cur.execute(
                 """
@@ -569,7 +577,7 @@ def get_home():
                 """,
                 (user_id, user_id)
             )
-            recommended_movies = cur.fetchall()
+            recommended_movies = cur.fetchall()'''
 
         cur.close()
         conn.close()
@@ -579,8 +587,84 @@ def get_home():
             'recent': recent_movies
         }
 
+        '''if recommended_movies:
+            response['recommended'] = recommended_movies'''
+
+        return jsonify(response), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route("/api/home/recommendations", methods=['GET'])
+@require_auth
+def get_home_recommendations():
+    """Get main catalog with recommendation system"""
+    user_id = None
+
+    # Check if user is authenticated (authentication logic remains the same)
+    token = request.headers.get('Authorization')
+    if token and token.startswith('Bearer '):
+        token = token = token[7:]
+    
+    # NOTE: The @require_auth decorator already handles authentication and sets request.user_id. 
+    # The token extraction logic below is somewhat redundant if @require_auth is active 
+    # but is kept for robustness in case @require_auth is temporarily commented out.
+    user_id = active_tokens.get(token) if token else request.user_id
+    
+    # --- FIX: Initialize response dictionary ---
+    response = {} 
+    
+    # --- END FIX ---
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        recommended_movies = []
+
+        # If user is authenticated, get personalized recommendations
+        if user_id: 
+            # Simple recommendation: movies from genres user has rated highly
+            cur.execute(
+                """
+                SELECT DISTINCT m.id, m.imdb_id, m.title, m.overview, m.release_date,
+                        m.popularity, m.vote_average, m.vote_count, m.poster_path
+                FROM movies m
+                JOIN movie_genres mg ON m.id = mg.movie_id
+                WHERE mg.genre_id IN (
+                    SELECT DISTINCT mg2.genre_id
+                    FROM ratings r
+                    JOIN movie_genres mg2 ON r.movie_id = mg2.movie_id
+                    WHERE r.user_id = %s AND r.rating >= 7
+                )
+                AND m.id NOT IN (
+                    SELECT movie_id FROM ratings WHERE user_id = %s
+                )
+                ORDER BY m.popularity DESC
+                LIMIT 20
+                """,
+                (user_id, user_id)
+            )
+            recommended_movies = cur.fetchall()
+            
+            # --- IMPROVEMENT: Set user_id from decorator (if not set above)
+            # This ensures the decorator's result is prioritized.
+            response['user_id'] = user_id
+            # --- END IMPROVEMENT
+
+        cur.close()
+        conn.close()
+
+        # Add recommended movies to response if the list is not empty
         if recommended_movies:
             response['recommended'] = recommended_movies
+        elif user_id:
+             # Add a message if user is authenticated but no recommendations are found
+             response['message'] = 'No personalized recommendations found based on your high ratings (>= 7).'
+        else:
+             # Add a message if the user is not authenticated or a generic fallback
+             response['message'] = 'User not authenticated. No personalized recommendations available.'
+
 
         return jsonify(response), 200
 
@@ -637,34 +721,6 @@ def get_movie_ratings(movie_id):
         import traceback
         return jsonify({"error": "Failed to fetch ratings", "trace": traceback.format_exc()}), 500
 
-@app.route('/api//movies/<int:movie_id>/ratings', methods=['POST'])
-@require_auth
-def add_movie_rating(movie_id):
-    """Add or update a rating for a movie"""
-    data = request.json
-    if not data or  'rating' not in data:
-        return jsonify({"error": "user_id and rating are required"}), 400
-
-    # get user id from token in headers
-    user_id = request.user_id
-    rating = data['rating']
-
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute("""
-            INSERT INTO ratings(user_id, movie_id, rating, timestamp)
-            VALUES (%s, %s, %s, now())
-            ON CONFLICT (user_id, movie_id) DO UPDATE
-            SET rating = EXCLUDED.rating, timestamp = now()
-        """, (user_id, movie_id, rating))
-        conn.commit()
-        cur.close()
-        conn.close()
-        return jsonify({"message": "Rating added/updated successfully"}), 201
-    except Exception:
-        import traceback
-        return jsonify({"error": "Failed to fetch ratings", "trace": traceback.format_exc()}), 500
 
 @app.route('/api/profile', methods=['GET'])
 @require_auth
@@ -847,7 +903,8 @@ def update_profile():
     except Exception as e:
         import traceback
         return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
-    
+
+
 
 
 
