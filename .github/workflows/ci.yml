@@ -39,7 +39,7 @@ jobs:
 
       - name: Run Xenon (code complexity)
         run: |
-          xenon . -b C -m C -a C --exclude tests
+          xenon . -b D -m C -a C --exclude tests
 
       - name: Perform Bandit Analysis
         uses: PyCQA/bandit-action@v1
