@@ -254,6 +254,7 @@ def get_movies():
             SELECT m.id, m.imdb_id, m.title, m.overview, m.release_date,
                    m.popularity, m.vote_average, m.vote_count, m.poster_path
             FROM movies m
+            ORDER BY m.id DESC
         """
 
         where_clauses = []
@@ -392,6 +393,7 @@ def search_movies():
             SELECT m.id, m.imdb_id, m.title, m.overview, m.release_date,
                    m.popularity, m.vote_average, m.vote_count, m.poster_path
             FROM movies m
+           ORDER BY m.id DESC
         """
 
         where_clauses = ["(m.title ILIKE %s OR m.overview ILIKE %s)"]
@@ -564,7 +566,7 @@ def get_home():
                 AND m.id NOT IN (
                     SELECT movie_id FROM ratings WHERE user_id = %s
                 )
-                ORDER BY m.popularity DESC
+               ORDER BY m.popularity DESC, m.id DESC
                 LIMIT 20
                 """,
                 (user_id, user_id)
