@@ -259,7 +259,6 @@ def get_movies():
             
             JOIN movie_genres mg ON m.id = mg.movie_id
             JOIN genres g ON mg.genre_id = g.id
-            ORDER BY m.id DESC
         """
 
         where_clauses = []
@@ -281,7 +280,7 @@ def get_movies():
         final_query = f"""
             {base_query}
             GROUP BY m.id
-            ORDER BY {order_clause}
+            ORDER BY {order_clause},  m.id DESC
             LIMIT %s OFFSET %s
         """
 
