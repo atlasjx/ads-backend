@@ -322,7 +322,126 @@ def get_movies():
         # Import traceback para debug mais detalhado (opcional)
         import traceback
         return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
+
+@app.route("/api/my-movies", methods=['GET'])
+@require_auth
+def get_user_rated_movies():
+    """
+    Get ONLY movies rated by the authenticated user.
+    Supports pagination, genre filtering, and sorting.
+    """
+    # Get user_id from the authenticated token (set by @require_auth)
+    user_id = request.user_id
     
+    page = request.args.get('page', 1, type=int)
+    limit = request.args.get('limit', 20, type=int)
+    genre = request.args.get('genre', None)
+    sort = request.args.get('sort', "date_new") # Default to most recently rated/released
+    offset = (page - 1) * limit
+
+    # Allowed sort mappings
+    # Added 'rated_at' to sort by when the user rated the movie
+    sort_map = {
+        "title_asc": "m.title ASC",
+        "title_desc": "m.title DESC",
+        "rating_desc": "m.vote_average DESC", # Global Average
+        "rating_asc": "m.vote_average ASC",
+        "user_rating_desc": "r.rating DESC",  # User's Rating
+        "user_rating_asc": "r.rating ASC",
+        "date_new": "r.updated_at DESC",      # Recently rated
+        "date_old": "r.updated_at ASC",
+        "release_new": "m.release_date DESC",
+        "release_old": "m.release_date ASC",
+        "popularity": "m.popularity DESC"
+    }
+    
+    # Fallback to recent ratings if sort key is invalid
+    order_clause = sort_map.get(sort, "r.updated_at DESC")
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        # 1. Base Query
+        # We join with 'ratings' immediately to filter by user
+        base_query = """
+            SELECT 
+                m.id, m.imdb_id, m.title, m.overview, m.release_date,
+                m.popularity, m.vote_average, m.vote_count, m.poster_path,
+                r.rating as user_rating, r.updated_at as rated_at,
+                -- Aggregate genres into an array
+                ARRAY_AGG(DISTINCT g.name) AS genres 
+            FROM movies m
+            JOIN ratings r ON m.id = r.movie_id
+            JOIN movie_genres mg ON m.id = mg.movie_id
+            JOIN genres g ON mg.genre_id = g.id
+            WHERE r.user_id = %s
+        """
+
+        params = [user_id]
+        
+        # 2. Handle genre filtering
+        if genre and genre.lower() != "all":
+            # If filtering by genre, we add the condition.
+            # Note: Because of ARRAY_AGG logic in this specific query structure,
+            # strict filtering might require a HAVING clause or subquery to keep the genres list full,
+            # but for consistency with your previous code, we filter here.
+            base_query += " AND g.name = %s"
+            params.append(genre)
+
+        # 3. Finalize Query (Group By + Order + Pagination)
+        # We must group by m.id and r.id/r.rating because of the aggregation
+        final_query = f"""
+            {base_query}
+            GROUP BY m.id, r.id, r.rating, r.updated_at
+            ORDER BY {order_clause}
+            LIMIT %s OFFSET %s
+        """
+
+        params.extend([limit, offset])
+
+        cur.execute(final_query, params)
+        movies = cur.fetchall()
+
+        # 4. Count Query for Pagination
+        # We need to count distinct movies rated by this user matching the genre
+        if genre and genre.lower() != "all":
+            count_query = """
+                SELECT COUNT(DISTINCT m.id)
+                FROM movies m
+                JOIN ratings r ON m.id = r.movie_id
+                JOIN movie_genres mg ON m.id = mg.movie_id
+                JOIN genres g ON mg.genre_id = g.id
+                WHERE r.user_id = %s AND g.name = %s
+            """
+            cur.execute(count_query, (user_id, genre))
+        else:
+            count_query = """
+                SELECT COUNT(DISTINCT m.id)
+                FROM movies m
+                JOIN ratings r ON m.id = r.movie_id
+                WHERE r.user_id = %s
+            """
+            cur.execute(count_query, (user_id,))
+
+        total = cur.fetchone()['count']
+
+        cur.close()
+        conn.close()
+
+        return jsonify({
+            'movies': movies,
+            'page': page,
+            'limit': limit,
+            'total': total,
+            'total_pages': (total + limit - 1) // limit,
+            'sort': sort,
+            'genre': genre
+        }), 200
+
+    except Exception as e:
+        import traceback
+        return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
 
 @app.route("/api/movies", methods=['POST'])
 @require_auth
