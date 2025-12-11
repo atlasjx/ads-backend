@@ -299,7 +299,7 @@ def register_ai():
             
         return jsonify({'error': 'Account already exists'}), 409
 
-    except Exception as e:
+    except Exception:
         # 5. Logging completo com Traceback
         logger.exception(f"Critical error registering user {username}")
         return jsonify({'error': 'An internal error occurred'}), 500
