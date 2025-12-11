@@ -236,7 +236,7 @@ def get_movie_ratings_traditional(movie_id):
 
 logger = logging.getLogger(__name__)
 
-@app.route("/api/auth/register-ai", methods=['POST'])
+@app.route("/api/auth/register", methods=['POST'])
 def register_ai():
     # 1. Tratamento seguro do JSON
     try:
@@ -304,7 +304,7 @@ def register_ai():
         logger.exception(f"Critical error registering user {username}")
         return jsonify({'error': 'An internal error occurred'}), 500
 
-@app.route("/api/movies-ai", methods=['GET'])
+@app.route("/api/movies", methods=['GET'])
 def get_movies_ai():
     
     # Parâmetros
@@ -400,9 +400,9 @@ def get_movies_ai():
         logger.error(f"Error fetching movies: {e}", exc_info=True)
         return jsonify({'error': 'Internal Server Error'}), 500
 
-@app.route('/api/movies/<int:movie_id>/ratings-ai', methods=['GET'])
+@app.route('/api/movies/<int:movie_id>/ratings', methods=['GET'])
 def get_movie_ratings_ai(movie_id):
-    # 1. Paginação (default: página 1, 20 itens)
+    # Paginação interna (para proteger a performance)
     page = request.args.get('page', 1, type=int)
     limit = request.args.get('limit', 20, type=int)
     offset = (page - 1) * limit
@@ -411,83 +411,75 @@ def get_movie_ratings_ai(movie_id):
         with get_db_connection() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 
-                # --- QUERY 1: Estatísticas (Média e Contagem por Estrela) ---
-                # O SQL faz o trabalho pesado de agregação aqui.
+                # 1. Calcular estatísticas globais (Média e Contagens)
+                # O SQL faz isto instantaneamente para TODAS as reviews do filme
                 stats_query = """
                     SELECT 
-                        COUNT(*) as total_ratings,
-                        AVG(rating) as average_rating,
-                        SUM(CASE WHEN ROUND(rating) = 1 THEN 1 ELSE 0 END) as stars_1,
-                        SUM(CASE WHEN ROUND(rating) = 2 THEN 1 ELSE 0 END) as stars_2,
-                        SUM(CASE WHEN ROUND(rating) = 3 THEN 1 ELSE 0 END) as stars_3,
-                        SUM(CASE WHEN ROUND(rating) = 4 THEN 1 ELSE 0 END) as stars_4,
-                        SUM(CASE WHEN ROUND(rating) = 5 THEN 1 ELSE 0 END) as stars_5
+                        AVG(rating) as avg,
+                        SUM(CASE WHEN ROUND(rating) = 1 THEN 1 ELSE 0 END) as c1,
+                        SUM(CASE WHEN ROUND(rating) = 2 THEN 1 ELSE 0 END) as c2,
+                        SUM(CASE WHEN ROUND(rating) = 3 THEN 1 ELSE 0 END) as c3,
+                        SUM(CASE WHEN ROUND(rating) = 4 THEN 1 ELSE 0 END) as c4,
+                        SUM(CASE WHEN ROUND(rating) = 5 THEN 1 ELSE 0 END) as c5
                     FROM ratings
-                    WHERE movie_id = %s;
+                    WHERE movie_id = %s
                 """
                 cur.execute(stats_query, (movie_id,))
                 stats = cur.fetchone()
 
-                # Se não houver avaliações, retorno rápido
-                if not stats or stats['total_ratings'] == 0:
-                    return jsonify({
+                # Se a média for None, é porque não há ratings
+                if not stats or stats['avg'] is None:
+                     return jsonify({
                         "movie_id": movie_id,
-                        "average_rating": 0,
-                        "rating_counts": {1:0, 2:0, 3:0, 4:0, 5:0},
-                        "ratings": [],
-                        "total_pages": 0
+                        "average_rating": None,
+                        "rating_counts": {1: 0, 2: 0, 3: 0, 4: 0, 5: 0},
+                        "ratings": []
                     })
 
-                # --- QUERY 2: Lista de Reviews Paginada ---
-                # Só buscamos as 20 linhas que precisamos mostrar agora
+                # 2. Buscar a lista de reviews (Paginada)
+                # Buscamos apenas um pedaço pequeno para enviar na lista
                 reviews_query = """
-                    SELECT user_id, rating, timestamp, comment
+                    SELECT user_id, rating, timestamp
                     FROM ratings
                     WHERE movie_id = %s
                     ORDER BY timestamp DESC
-                    LIMIT %s OFFSET %s;
+                    LIMIT %s OFFSET %s
                 """
                 cur.execute(reviews_query, (movie_id, limit, offset))
-                reviews_rows = cur.fetchall()
+                rows = cur.fetchall()
 
-        # Formatação dos dados para resposta
-        response = {
+        # Construção da resposta IDENTICA à original
+        return jsonify({
             "movie_id": movie_id,
-            "total_ratings": stats['total_ratings'],
-            # Arredondar a média para 1 casa decimal (ex: 4.2)
-            "average_rating": round(stats['average_rating'], 1) if stats['average_rating'] else 0,
             
-            # Construir o objeto de contagem a partir das colunas do SQL
+            # Média real (calculada pelo SQL)
+            "average_rating": stats['avg'], 
+            
+            # Contagens reais (calculadas pelo SQL)
+            # Convertemos para int porque o SUM do SQL pode vir como Decimal/Long
             "rating_counts": {
-                1: int(stats['stars_1']),
-                2: int(stats['stars_2']),
-                3: int(stats['stars_3']),
-                4: int(stats['stars_4']),
-                5: int(stats['stars_5'])
+                1: int(stats['c1'] or 0),
+                2: int(stats['c2'] or 0),
+                3: int(stats['c3'] or 0),
+                4: int(stats['c4'] or 0),
+                5: int(stats['c5'] or 0)
             },
             
-            # Lista de reviews formatada
+            # A lista de reviews (agora paginada, mas com o formato de objeto igual)
             "ratings": [
                 {
-                    "user_id": r["user_id"],
-                    "rating": r["rating"],
-                    "comment": r.get("comment", ""), # Se tiveres coluna de comentário
+                    "user_id": r["user_id"], 
+                    "rating": r["rating"], 
                     "timestamp": r["timestamp"].isoformat()
                 } 
-                for r in reviews_rows
-            ],
-            "page": page,
-            "total_pages": (stats['total_ratings'] + limit - 1) // limit
-        }
+                for r in rows
+            ]
+        })
 
-        return jsonify(response), 200
-
-    except Exception as e:
-        # Log do erro no servidor (seguro)
-        logging.error(f"Error fetching ratings for movie {movie_id}: {e}", exc_info=True)
-        # Resposta genérica para o utilizador (seguro)
-        return jsonify({"error": "Unable to fetch ratings"}), 500
-    
+    except Exception:
+        # Log seguro e resposta limpa
+        logger.error(f"Error getting ratings for movie {movie_id}", exc_info=True)
+        return jsonify({"error": "Failed to fetch ratings"}), 500
 
 """REST OF THE API ENDPOINTS"""
 
