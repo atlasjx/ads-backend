@@ -54,10 +54,6 @@ jobs:
       - name: Start Docker Services (DB, Web, Populate)
         run: docker compose up -d --build
 
-      - name: Wait for API to be Ready
-        run: |
-          timeout 60s bash -c 'until curl -sS -f http://localhost:80/health; do echo "Aguardando health check da API em http://localhost:80/health..."; sleep 3; done'
-
       - name: Run tests (Integration)
         env:
           PYTHONPATH: .
