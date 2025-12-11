@@ -2,8 +2,9 @@ import pytest
 import requests
 import json
 import time
+import os
 
-BASE_URL = "http://localhost"
+BASE_URL = os.environ.get("API_HOST", "http://localhost")
 API = BASE_URL + "/api"
 
 

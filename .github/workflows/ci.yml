@@ -31,6 +31,15 @@ jobs:
           "$PYTHON_EXEC" -m pip install -r requirements.txt -c constraints.txt
           "$PYTHON_EXEC" -m pip install --upgrade pip-audit
           "$PYTHON_EXEC" -m pip install xenon
+          
+      - name: Start Docker Services (DB, Web, Populate)
+        run: docker compose up -d --build
+
+      - name: Install Netcat
+        run: sudo apt-get update && sudo apt-get install -y netcat
+
+      - name: Wait for API to be Ready
+        run: timeout 60s bash -c 'until nc -z localhost 80; do echo "Aguardando API em localhost:80..."; sleep 3; done'
 
       - name: Ruff Linter
         uses: astral-sh/ruff-action@v3
