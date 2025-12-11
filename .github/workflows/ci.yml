@@ -54,6 +54,7 @@ jobs:
       - name: Start Docker Services (DB, Web, Populate)
         run: docker compose up -d --build
 
+
       - name: Run tests (Integration)
         env:
           PYTHONPATH: .
