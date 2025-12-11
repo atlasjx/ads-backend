@@ -93,11 +93,27 @@ def require_auth(f):
             return jsonify({'error': 'Invalid or expired token'}), 401
 
         # Add user_id to request context
-        request.user_id = active_tokens[token]
+        user_info = active_tokens[token]
+        request.user_id = user_info['id']
+        request.user_role = user_info['role']
+
         return f(*args, **kwargs)
 
     return decorated_function
 
+def require_admin(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        # Como este decorator vem DEPOIS do require_auth, 
+        # o request.user_role já existe.
+        
+        role = getattr(request, 'user_role', None)
+        
+        if role != 'admin':
+            return jsonify({'error': 'Admin privileges required'}), 403
+
+        return f(*args, **kwargs)
+    return decorated_function
 
 @app.route("/")
 def main():
@@ -191,7 +207,11 @@ def login():
 
         # Generate token
         token = generate_token()
-        active_tokens[token] = user['id']
+        active_tokens[token] = {
+            'id': user['id'],
+            'role': user['role']
+        }
+
 
         return jsonify({
             'message': 'Login successful',
@@ -225,7 +245,7 @@ def logout():
 
 @app.route("/api/movies", methods=['GET'])
 def get_movies():
-    """Browse catalog with pagination, genre filter, and sorting"""
+    
     page = request.args.get('page', 1, type=int)
     limit = request.args.get('limit', 20, type=int)
     genre = request.args.get('genre', None)        # e.g. "Action"
@@ -325,13 +345,9 @@ def get_movies():
 
 @app.route("/api/my-movies", methods=['GET'])
 @require_auth
-def get_user_rated_movies():
-    """
-    Get ONLY movies rated by the authenticated user.
-    Supports pagination, genre filtering, and sorting.
-    """
-   
-    user_id = request.user_id
+def get_myMovies():
+
+    user_id = request.user_id #Obtém o ID do usuário autenticado para filtrar os filmes avaliados por ele 
     
     page = request.args.get('page', 1, type=int)
     limit = request.args.get('limit', 20, type=int)
@@ -341,21 +357,15 @@ def get_user_rated_movies():
 
    
     sort_map = {
-        "title_asc": "m.title ASC",
-        "title_desc": "m.title DESC",
-        "rating_desc": "m.vote_average DESC", 
-        "rating_asc": "m.vote_average ASC",
-        "user_rating_desc": "r.rating DESC",  
-        "user_rating_asc": "r.rating ASC",
-        "date_new": "r.updated_at DESC",      
-        "date_old": "r.updated_at ASC",
-        "release_new": "m.release_date DESC",
-        "release_old": "m.release_date ASC",
-        "popularity": "m.popularity DESC"
+        "title_asc": "title ASC",
+        "title_desc": "title DESC",
+        "rating_desc": "vote_average DESC",
+        "rating_asc": "vote_average ASC",
+        "date_new": "release_date DESC",
+        "date_old": "release_date ASC",
+        "popularity": "popularity DESC"
     }
-    
-
-    order_clause = sort_map.get(sort, "r.updated_at DESC")
+    order_clause = sort_map.get(sort, "popularity DESC")
 
     try:
         conn = get_db_connection()
@@ -434,7 +444,6 @@ def get_user_rated_movies():
 @app.route("/api/movies", methods=['POST'])
 @require_auth
 def insert_movie():
-    """Insert new movie (authenticated) with auto-generated ID"""
     data = request.get_json()
 
     if not data or 'title' not in data:
@@ -477,6 +486,74 @@ def insert_movie():
         import traceback
         return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
 
+@app.route("/api/admin/movies/<int:movie_id>", methods=['PUT'])
+@require_auth   # Garante que está logado
+@require_admin  # Garante que é admin
+def update_movie(movie_id):
+    """
+    Atualiza os dados de um filme existente.
+    Aceita atualizações parciais (ex: enviar apenas o título).
+    """
+    data = request.get_json()
+
+    if not data:
+        return jsonify({'error': 'No data provided'}), 400
+
+    # 1. Lista de segurança (Allowlist)
+    # Define estritamente quais colunas podem ser alteradas para evitar SQL Injection 
+    # ou alteração de campos proibidos (como o ID).
+    allowed_fields = [
+        'imdb_id', 'title', 'original_title', 'overview', 'release_date',
+        'adult', 'budget', 'revenue', 'runtime', 'popularity', 
+        'vote_average', 'vote_count', 'original_language', 'status', 
+        'tagline', 'homepage', 'poster_path'
+    ]
+    
+    updates = []
+    params = []
+
+    # 2. Constrói a query dinamicamente baseada no JSON recebido
+    for field in allowed_fields:
+        if field in data:
+            updates.append(f"{field} = %s")
+            params.append(data[field])
+
+    # Se o utilizador enviou campos, mas nenhum deles está na lista permitida
+    if not updates:
+        return jsonify({'error': 'No valid fields provided to update'}), 400
+
+    # Adiciona o ID do filme ao final dos parâmetros para a cláusula WHERE
+    params.append(movie_id)
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        # 3. Monta e executa o SQL
+        # Ex: "UPDATE movies SET title = %s, overview = %s WHERE id = %s"
+        sql_query = f"UPDATE movies SET {', '.join(updates)} WHERE id = %s RETURNING id"
+        
+        cur.execute(sql_query, params)
+        movie = cur.fetchone()
+
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        if not movie:
+            return jsonify({'error': 'Movie not found'}), 404
+
+        return jsonify({
+            'message': 'Movie updated successfully',
+            'movie_id': movie_id,
+            'updated_fields': [k for k in data.keys() if k in allowed_fields]
+        }), 200
+
+    except Exception as e:
+        # Dica: Em produção, use logging em vez de print
+        print(f"Update error: {e}")
+        return jsonify({'error': 'Failed to update movie', 'details': str(e)}), 500
+    
 @app.route("/api/movies/search", methods=['GET'])
 def search_movies():
     """Search functionality with genre filter and sorting"""
@@ -619,7 +696,39 @@ def submit_rating(movie_id):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+@app.route("/api/movie/<int:movie_id>/rating", methods=['DELETE'])
+@require_auth
+def delete_rating(movie_id):
+    """
+    Remove a avaliação do utilizador autenticado para um filme específico.
+    """
+    user_id = request.user_id # Obtido do token pelo decorator @require_auth
 
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        # Executa a remoção garantindo que o rating pertence ao user logado
+        cur.execute(
+            "DELETE FROM ratings WHERE user_id = %s AND movie_id = %s",
+            (user_id, movie_id)
+        )
+        
+        # cur.rowcount diz quantas linhas foram afetadas
+        rows_deleted = cur.rowcount
+
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        if rows_deleted == 0:
+            return jsonify({'message': 'Rating not found or already deleted'}), 404
+
+        return jsonify({'message': 'Rating deleted successfully'}), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    
 @app.route("/api/home", methods=['GET'])
 def get_home():
     """Get main catalog with recommendation system"""
