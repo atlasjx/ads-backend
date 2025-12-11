@@ -27,11 +27,12 @@ jobs:
         run: |
           PYTHON_EXEC="$(python -c 'import sys; print(sys.executable)')"
           echo "PYTHON_EXEC=$PYTHON_EXEC" >> "$GITHUB_ENV"
+          # Instala dependências e ferramentas de análise estática no ambiente do runner
           "$PYTHON_EXEC" -m pip install --upgrade "pip>=25.3" "setuptools>=78.1.1" wheel
           "$PYTHON_EXEC" -m pip install -r requirements.txt -c constraints.txt
           "$PYTHON_EXEC" -m pip install --upgrade pip-audit
           "$PYTHON_EXEC" -m pip install xenon
-          
+
       - name: Start Docker Services (DB, Web, Populate)
         run: docker compose up -d --build
 
@@ -62,9 +63,13 @@ jobs:
       - name: Run tests
         env:
           PYTHONPATH: .
+          API_HOST: http://localhost
         run: |
           "$PYTHON_EXEC" -m pytest
-          
+
+      - name: Stop Docker Services and Remove Volumes
+        run: docker compose down -v
+
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v2
         with:
