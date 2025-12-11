@@ -7,6 +7,9 @@ import hashlib
 import secrets
 import os
 import re
+import logging
+from psycopg2.errorcodes import UNIQUE_VIOLATION
+import traceback
 
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": "*"}})
@@ -40,22 +43,18 @@ def get_db_connection():
         }
         return psycopg2.connect(**DB_CONFIG, cursor_factory=RealDictCursor)
 
-
 def hash_password(password):
     """Hash password with SHA-256"""
     return hashlib.sha256(password.encode()).hexdigest()
-
 
 def generate_token():
     """Generate a secure random token"""
     return secrets.token_urlsafe(32)
 
-
 def validate_email(email):
     """Validate email format using regex"""
     pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
     return re.match(pattern, email) is not None
-
 
 def validate_password(password):
     """Validate password meets security requirements"""
@@ -72,7 +71,6 @@ def validate_password(password):
         return False, "Password must contain at least one special character"
     
     return True, None
-
 
 def require_auth(f):
     """Decorator to check authentication"""
@@ -115,45 +113,47 @@ def require_admin(f):
         return f(*args, **kwargs)
     return decorated_function
 
-@app.route("/")
-def main():
-    return "ads-backend"
 
+"""TRADITIONAL APPROACH"""
 
-@app.route("/api/auth/register", methods=['POST'])
-def register():
-    """User registration endpoint"""
+@app.route("/api/auth/register-traditional", methods=['POST'])
+def register_traditional():
     data = request.get_json()
+    print("Register data received:", data)  # Debugging line
 
-    # Validate input
-    if not data or not all(k in data for k in ('username', 'email', 'password')):
-        return jsonify({'error': 'Missing required fields'}), 400
-
-    username = data['username']
+    if not data or 'email' not in data or 'password' not in data or 'username' not in data:
+        return jsonify({'error': 'Missing required fields. Email, Password and Username are required'}), 400
+    
     email = data['email']
     password = data['password']
+    username = data['username']
 
+    # Validações básicas
     if not validate_email(email):
         return jsonify({'error': 'Invalid email format'}), 400
-
-    is_valid, error_message = validate_password(password)
+    
+    is_valid, error_msg = validate_password(password)
     if not is_valid:
-        return jsonify({'error': error_message}), 400
+        return jsonify({'error': error_msg}), 400
 
-    # Hash password
-    password_hash = hash_password(password)
+    # Vai verificar se já existe um utilizador com o mesmo email ou username
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    cur.execute("SELECT id FROM users WHERE email = %s OR username = %s", (email, username))
+    existing_user = cur.fetchone()
 
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-
-        # Insert new user (role defaults to 'user' in database)
+    # Se já existir, retorna erro 409
+    if existing_user:
+        return jsonify({'error': 'Email or Username already exists'}), 409
+    # Se não existir, adiciona o novo utilizador à base de dados
+    else:
+        password_hash = hash_password(password)
         cur.execute(
             "INSERT INTO users (username, email, password_hash, role) VALUES (%s, %s, %s, 'user') RETURNING id",
             (username, email, password_hash)
         )
         user_id = cur.fetchone()['id']
-
         conn.commit()
         cur.close()
         conn.close()
@@ -163,17 +163,337 @@ def register():
             'user_id': user_id
         }), 201
 
-    except psycopg2.IntegrityError as e:
-        error_msg = str(e)
-        if 'users_username_key' in error_msg or 'username' in error_msg.lower():
-            return jsonify({'error': 'Username already exists'}), 409
-        elif 'users_email_key' in error_msg or 'email' in error_msg.lower():
-            return jsonify({'error': 'Email already exists'}), 409
-        else:
-            return jsonify({'error': 'Username or email already exists'}), 409
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+@app.route("/api/movies-traditional", methods=['GET'])
+def get_movies_traditional():
 
+    data = request.get_json()
+    print("Register data received:", data)  # Debugging line
+
+    page = data.get('page', 1)
+    sortedBy = data.get('sortedBy', 'popularity')
+    offset = (page - 1) * 20
+
+    sorted_options = {
+        "title_asc": "title ASC",
+        "title_desc": "title DESC",
+        "date_new": "release_date DESC",
+        "date_old": "release_date ASC",
+    }
+
+    sorted_clause = sorted_options.get(sortedBy, "popularity DESC") 
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    query = f"""SELECT 
+    m.id, 
+    m.title, 
+    m.release_date, 
+    ARRAY_AGG(g.name) AS genres
+    FROM movies m
+    JOIN movie_genres mg ON m.id = mg.movie_id
+    JOIN genres g ON mg.genre_id = g.id
+    GROUP BY m.id, m.title, m.release_date
+    ORDER BY {sorted_clause}
+    LIMIT 20 OFFSET %s"""
+
+    cur.execute(query, (offset,))
+    movies = cur.fetchall()
+
+    cur.close()
+    conn.close()
+
+    return jsonify({'movies': movies}), 200
+
+@app.route('/api//movies/<int:movie_id>/ratings-traditional', methods=['GET'])
+def get_movie_ratings_traditional(movie_id):
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT user_id, rating, timestamp
+        FROM ratings
+        WHERE movie_id = %s
+    """, (movie_id,))
+
+    ratings = cur.fetchall()
+    cur.close()
+    conn.close()
+
+    #Calcula a média das avaliações
+    if ratings:
+        average_rating = sum([r[1] for r in ratings]) / len(ratings)
+    else:
+        average_rating = None
+    
+    return jsonify({
+        "movie_id": movie_id,
+        "average_rating": average_rating,
+        "ratings": [{"user_id": r[0], "rating": r[1], "timestamp": r[2].isoformat()} for r in ratings]
+    }), 200
+
+"""AI-ASSISTED APPROACH"""
+
+logger = logging.getLogger(__name__)
+
+@app.route("/api/auth/register-ai", methods=['POST'])
+def register_ai():
+    # 1. Tratamento seguro do JSON
+    try:
+        data = request.get_json(force=True) # force=True aceita JSON mesmo sem o header correto
+    except Exception:
+        return jsonify({'error': 'Invalid JSON format'}), 400
+
+    # 2. Validação de campos (Early Return)
+    required_fields = ('username', 'email', 'password')
+    if not data or not all(k in data and data[k] for k in required_fields):
+        return jsonify({'error': 'Missing required fields'}), 400
+
+    username = data['username'].strip()
+    email = data['email'].strip().lower() # Normalizar email
+    password = data['password']
+
+    # Validações de formato (Assumindo que estas funções existem)
+    if not validate_email(email):
+        return jsonify({'error': 'Invalid email format'}), 400
+
+    is_valid, error_msg = validate_password(password)
+    if not is_valid:
+        return jsonify({'error': error_msg}), 400
+
+    password_hash = hash_password(password)
+
+    try:
+        with get_db_connection() as conn:
+            # 3. Cursor Factory (se get_db_connection não o fizer por padrão)
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO users (username, email, password_hash, role) 
+                    VALUES (%s, %s, %s, 'user') 
+                    RETURNING id
+                    """,
+                    (username, email, password_hash)
+                )
+                
+                # Fetch seguro (funciona para tuplo ou dict)
+                result = cur.fetchone()
+                user_id = result['id'] if isinstance(result, dict) else result[0]
+                
+                conn.commit()
+
+        return jsonify({'message': 'User created successfully', 'user_id': user_id}), 201
+
+    except psycopg2.IntegrityError as e:
+        # Rollback explícito (boa prática, embora o context manager geralmente trate)
+        if 'conn' in locals():
+            conn.rollback()
+
+        # 4. Verificação robusta via PGCODE
+        if e.pgcode == UNIQUE_VIOLATION:
+            # Tentar identificar qual campo falhou via constraint name (mais robusto)
+            if 'users_username_key' in e.diag.constraint_name:
+                return jsonify({'error': 'Username already taken'}), 409
+            elif 'users_email_key' in e.diag.constraint_name:
+                return jsonify({'error': 'Email already registered'}), 409
+            
+        return jsonify({'error': 'Account already exists'}), 409
+
+    except Exception as e:
+        # 5. Logging completo com Traceback
+        logger.exception(f"Critical error registering user {username}")
+        return jsonify({'error': 'An internal error occurred'}), 500
+
+@app.route("/api/movies-ai", methods=['GET'])
+def get_movies_ai():
+    
+    # Parâmetros
+    page = request.args.get('page', 1, type=int)
+    limit = request.args.get('limit', 20, type=int)
+    genre = request.args.get('genre', None)
+    sort = request.args.get('sort', "popularity")
+    offset = (page - 1) * limit
+
+    # Mapping de Sort
+    sort_map = {
+        "title_asc": "m.title ASC",
+        "title_desc": "m.title DESC",
+        "rating_desc": "m.vote_average DESC",
+        "rating_asc": "m.vote_average ASC",
+        "date_new": "m.release_date DESC",
+        "date_old": "m.release_date ASC",
+        "popularity": "m.popularity DESC"
+    }
+    
+    order_clause = sort_map.get(sort, "m.popularity DESC")
+
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                
+                params = []
+                
+                # --- PASSO 1: Construir a lógica de filtro (WHERE) ---
+                where_sql = ""
+                if genre and genre.lower() != "all":
+                    where_sql = "WHERE g.name = %s"
+                    params.append(genre)
+
+                # --- PASSO 2: Query Principal com CTE ---
+                # A CTE 'target_ids' encontra APENAS os IDs e aplica a paginação primeiro (Performance!)
+                query = f"""
+                    WITH target_ids AS (
+                        SELECT m.id
+                        FROM movies m
+                        JOIN movie_genres mg ON m.id = mg.movie_id
+                        JOIN genres g ON mg.genre_id = g.id
+                        {where_sql}
+                        GROUP BY m.id
+                        ORDER BY {order_clause}
+                        LIMIT %s OFFSET %s
+                    )
+                    SELECT 
+                        m.id, m.imdb_id, m.title, m.overview, m.release_date,
+                        m.popularity, m.vote_average, m.vote_count, m.poster_path,
+                        ARRAY_AGG(g_all.name) AS genres
+                    FROM target_ids t
+                    JOIN movies m ON t.id = m.id
+                    JOIN movie_genres mg ON m.id = mg.movie_id
+                    JOIN genres g_all ON mg.genre_id = g_all.id
+                    GROUP BY m.id, m.title, m.release_date, m.popularity, m.vote_average, m.vote_count, m.poster_path, m.overview, m.imdb_id
+                    ORDER BY {order_clause};
+                """
+                
+                # Adiciona limit e offset aos parametros
+                params.extend([limit, offset])
+                
+                cur.execute(query, params)
+                movies = cur.fetchall() # Retorna dicts se usares RealDictCursor
+
+                # --- PASSO 3: Contagem Total (Separada) ---
+                # Precisamos saber o total para calcular as páginas
+                if genre and genre.lower() != "all":
+                    count_query = """
+                        SELECT COUNT(DISTINCT m.id) as total
+                        FROM movies m
+                        JOIN movie_genres mg ON m.id = mg.movie_id
+                        JOIN genres g ON mg.genre_id = g.id
+                        WHERE g.name = %s
+                    """
+                    cur.execute(count_query, (genre,))
+                else:
+                    cur.execute("SELECT COUNT(*) as total FROM movies")
+                
+                total = cur.fetchone()['total']
+
+        # Resposta
+        return jsonify({
+            'movies': movies,
+            'page': page,
+            'limit': limit,
+            'total': total,
+            'total_pages': (total + limit - 1) // limit
+        }), 200
+
+    except Exception as e:
+        # Log seguro no servidor, resposta genérica ao cliente
+        logger.error(f"Error fetching movies: {e}", exc_info=True)
+        return jsonify({'error': 'Internal Server Error'}), 500
+
+@app.route('/api/movies/<int:movie_id>/ratings-ai', methods=['GET'])
+def get_movie_ratings_ai(movie_id):
+    # 1. Paginação (default: página 1, 20 itens)
+    page = request.args.get('page', 1, type=int)
+    limit = request.args.get('limit', 20, type=int)
+    offset = (page - 1) * limit
+
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                
+                # --- QUERY 1: Estatísticas (Média e Contagem por Estrela) ---
+                # O SQL faz o trabalho pesado de agregação aqui.
+                stats_query = """
+                    SELECT 
+                        COUNT(*) as total_ratings,
+                        AVG(rating) as average_rating,
+                        SUM(CASE WHEN ROUND(rating) = 1 THEN 1 ELSE 0 END) as stars_1,
+                        SUM(CASE WHEN ROUND(rating) = 2 THEN 1 ELSE 0 END) as stars_2,
+                        SUM(CASE WHEN ROUND(rating) = 3 THEN 1 ELSE 0 END) as stars_3,
+                        SUM(CASE WHEN ROUND(rating) = 4 THEN 1 ELSE 0 END) as stars_4,
+                        SUM(CASE WHEN ROUND(rating) = 5 THEN 1 ELSE 0 END) as stars_5
+                    FROM ratings
+                    WHERE movie_id = %s;
+                """
+                cur.execute(stats_query, (movie_id,))
+                stats = cur.fetchone()
+
+                # Se não houver avaliações, retorno rápido
+                if not stats or stats['total_ratings'] == 0:
+                    return jsonify({
+                        "movie_id": movie_id,
+                        "average_rating": 0,
+                        "rating_counts": {1:0, 2:0, 3:0, 4:0, 5:0},
+                        "ratings": [],
+                        "total_pages": 0
+                    })
+
+                # --- QUERY 2: Lista de Reviews Paginada ---
+                # Só buscamos as 20 linhas que precisamos mostrar agora
+                reviews_query = """
+                    SELECT user_id, rating, timestamp, comment
+                    FROM ratings
+                    WHERE movie_id = %s
+                    ORDER BY timestamp DESC
+                    LIMIT %s OFFSET %s;
+                """
+                cur.execute(reviews_query, (movie_id, limit, offset))
+                reviews_rows = cur.fetchall()
+
+        # Formatação dos dados para resposta
+        response = {
+            "movie_id": movie_id,
+            "total_ratings": stats['total_ratings'],
+            # Arredondar a média para 1 casa decimal (ex: 4.2)
+            "average_rating": round(stats['average_rating'], 1) if stats['average_rating'] else 0,
+            
+            # Construir o objeto de contagem a partir das colunas do SQL
+            "rating_counts": {
+                1: int(stats['stars_1']),
+                2: int(stats['stars_2']),
+                3: int(stats['stars_3']),
+                4: int(stats['stars_4']),
+                5: int(stats['stars_5'])
+            },
+            
+            # Lista de reviews formatada
+            "ratings": [
+                {
+                    "user_id": r["user_id"],
+                    "rating": r["rating"],
+                    "comment": r.get("comment", ""), # Se tiveres coluna de comentário
+                    "timestamp": r["timestamp"].isoformat()
+                } 
+                for r in reviews_rows
+            ],
+            "page": page,
+            "total_pages": (stats['total_ratings'] + limit - 1) // limit
+        }
+
+        return jsonify(response), 200
+
+    except Exception as e:
+        # Log do erro no servidor (seguro)
+        logging.error(f"Error fetching ratings for movie {movie_id}: {e}", exc_info=True)
+        # Resposta genérica para o utilizador (seguro)
+        return jsonify({"error": "Unable to fetch ratings"}), 500
+    
+
+"""REST OF THE API ENDPOINTS"""
+
+@app.route("/")
+def main():
+    return "ads-backend"
 
 @app.route("/api/auth/login", methods=['POST'])
 def login():
@@ -227,7 +547,6 @@ def login():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-
 @app.route("/api/auth/logout", methods=['POST'])
 @require_auth
 def logout():
@@ -241,107 +560,6 @@ def logout():
         return jsonify({'message': 'Logout successful'}), 200
     else:
         return jsonify({'message': 'Logout successful'}), 200
-
-
-@app.route("/api/movies", methods=['GET'])
-def get_movies():
-    
-    page = request.args.get('page', 1, type=int)
-    limit = request.args.get('limit', 20, type=int)
-    genre = request.args.get('genre', None)        # e.g. "Action"
-    sort = request.args.get('sort', "popularity") # default sort
-    offset = (page - 1) * limit
-
-    # Allowed sort mappings (MANTIDO)
-    sort_map = {
-        "title_asc": "title ASC",
-        "title_desc": "title DESC",
-        "rating_desc": "vote_average DESC",
-        "rating_asc": "vote_average ASC",
-        "date_new": "release_date DESC",
-        "date_old": "release_date ASC",
-        "popularity": "popularity DESC"
-    }
-    order_clause = sort_map.get(sort, "popularity DESC")
-
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-
-        # 1. Base Query CORRIGIDA com ARRAY_AGG e GROUP BY
-        base_query = """
-            SELECT 
-                m.id, m.imdb_id, m.title, m.overview, m.release_date,
-                m.popularity, m.vote_average, m.vote_count, m.poster_path,
-                -- Agrega todos os nomes de gênero em um array para cada filme
-                ARRAY_AGG(g.name) AS genres 
-            FROM movies m
-            
-            JOIN movie_genres mg ON m.id = mg.movie_id
-            JOIN genres g ON mg.genre_id = g.id
-        """
-
-        where_clauses = []
-        params = []
-        
-        # 2. Lógica de Filtro por Gênero (MANTIDA)
-        # Handle genre filtering if provided
-        if genre and genre.lower() != "all":
-            # Para filtrar por um gênero, precisamos garantir que o filme tenha aquele gênero.
-            # Adicionamos a condição WHERE, mas não precisamos repetir os JOINs.
-            where_clauses.append("g.name = %s")
-            params.append(genre)
-
-        # Build WHERE clause
-        if where_clauses:
-            base_query += " WHERE " + " AND ".join(where_clauses)
-        
-        # 3. Adiciona o GROUP BY para que ARRAY_AGG funcione
-        final_query = f"""
-            {base_query}
-            GROUP BY m.id
-            ORDER BY {order_clause},  m.id DESC
-            LIMIT %s OFFSET %s
-        """
-
-        params.extend([limit, offset])
-
-        cur.execute(final_query, params)
-        movies = cur.fetchall()
-
-        # 4. Count Query (REQUER MUDANÇA se o filtro de gênero estiver ativo)
-        # Se o filtro de gênero estiver ativo, a contagem deve contar filmes (m.id) distintos
-        if genre and genre.lower() != "all":
-             count_query = """
-                SELECT COUNT(DISTINCT m.id)
-                FROM movies m
-                JOIN movie_genres mg ON m.id = mg.movie_id
-                JOIN genres g ON mg.genre_id = g.id
-                WHERE g.name = %s
-            """
-             cur.execute(count_query, (genre,))
-        else:
-            # Se não há filtro de gênero, a contagem é simples (MANTIDO)
-            count_query = "SELECT COUNT(*) FROM movies"
-            cur.execute(count_query)
-
-        total = cur.fetchone()['count']
-
-        cur.close()
-        conn.close()
-
-        return jsonify({
-            'movies': movies,
-            'page': page,
-            'limit': limit,
-            'total': total,
-            'total_pages': (total + limit - 1) // limit
-        }), 200
-
-    except Exception as e:
-        # Import traceback para debug mais detalhado (opcional)
-        import traceback
-        return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
 
 @app.route("/api/my-movies", methods=['GET'])
 @require_auth
@@ -650,7 +868,6 @@ def search_movies():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-
 @app.route("/api/movie/<int:movie_id>/rating", methods=['POST'])
 @require_auth
 def submit_rating(movie_id):
@@ -888,57 +1105,6 @@ def get_home_recommendations():
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-
-@app.route('/api//movies/<int:movie_id>/ratings', methods=['GET'])
-def get_movie_ratings(movie_id):
-    """List all ratings for a movie, with average and per-rating counts."""
-    import traceback
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute("""
-            SELECT user_id, rating, timestamp
-            FROM ratings
-            WHERE movie_id = %s
-            ORDER BY timestamp DESC
-        """, (movie_id,))
-        rows = cur.fetchall()
-        cur.close()
-        conn.close()
-
-        if not rows:
-            return jsonify({
-                "movie_id": movie_id,
-                "average_rating": None,
-                "rating_counts": {},
-                "ratings": []
-            })
-
-        # Compute average rating
-        ratings_list = [row["rating"] for row in rows]
-        avg_rating = sum(ratings_list) / len(ratings_list)
-
-        # Count number of ratings per rounded rating (1-5)
-        rounded_ratings = [round(r) for r in ratings_list]
-        rating_counts = {i: rounded_ratings.count(i) for i in range(1, 6)}
-
-        # Prepare rating details using dict access
-        ratings = [
-            {"user_id": row["user_id"], "rating": row["rating"], "timestamp": row["timestamp"].isoformat()}
-            for row in rows
-        ]
-
-        return jsonify({
-            "movie_id": movie_id,
-            "average_rating": avg_rating,
-            "rating_counts": rating_counts,
-            "ratings": ratings
-        })
-
-    except Exception:
-        import traceback
-        return jsonify({"error": "Failed to fetch ratings", "trace": traceback.format_exc()}), 500
-
 
 @app.route('/api/profile', methods=['GET'])
 @require_auth
