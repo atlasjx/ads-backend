@@ -770,7 +770,6 @@ def get_home():
         )
         recent_movies = cur.fetchall()
 
-        recommended_movies = []
 
         # If user is authenticated, get personalized recommendations
         '''if user_id:
