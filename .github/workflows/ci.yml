@@ -51,12 +51,33 @@ jobs:
         run: |
           "$PYTHON_EXEC" -m pip_audit --requirement requirements.txt
 
-      - name: Run tests
+# --- 3. ORQUESTRAÇÃO DE TESTES (RESOLVE CONEXÃO) ---
+      - name: Start Docker Services (DB, Web, Populate)
+        # Usa o docker-compose.yml para construir e iniciar todos os serviços em background
+        run: docker compose up -d --build
+
+      - name: Install Netcat (for health check)
+        # Netcat é necessário para verificar se a porta 80 está a responder
+        run: sudo apt-get update && sudo apt-get install -y netcat-openbsd
+
+      - name: Wait for API to be Ready
+        # Health check que espera que a porta mapeada (80) esteja acessível (evita Connection Refused)
+        run: timeout 60s bash -c 'until nc -z localhost 80; do echo "Aguardando API em localhost:80..."; sleep 3; done'
+
+      # --- 4. EXECUÇÃO DE TESTES ---
+      - name: Run tests (Integration)
         env:
           PYTHONPATH: .
+          # API_HOST=http://localhost é o que o compose mapeou para a porta 80 do serviço 'web'
           API_HOST: http://localhost
         run: |
           "$PYTHON_EXEC" -m pytest
+
+      # --- 5. LIMPEZA E BUILD FINAL ---
+      # CRUCIAL: Este passo tem de correr SEMPRE para remover os volumes do root e evitar o erro EACCES na próxima execução.
+      - name: Stop Docker Services and Remove Volumes
+        if: always()
+        run: docker compose down -v
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v2
