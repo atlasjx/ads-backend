@@ -648,7 +648,6 @@ def get_myMovies():
         }), 200
 
     except Exception as e:
-        import traceback
         return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
 
 @app.route("/api/movies", methods=['POST'])
@@ -693,7 +692,6 @@ def insert_movie():
         }), 201
 
     except Exception as e:
-        import traceback
         return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
 
 @app.route("/api/admin/movies/<int:movie_id>", methods=['PUT'])
@@ -1164,7 +1162,6 @@ def get_profile():
         return jsonify(response), 200
 
     except Exception as e:
-        import traceback
         return jsonify({'error': 'Failed to fetch profile data', 'details': str(e), 'trace': traceback.format_exc()}), 500
     
 @app.route('/api/profile', methods=['PUT'])
@@ -1275,7 +1272,6 @@ def update_profile():
             return jsonify({'error': 'Integrity constraint violation'}), 409
             
     except Exception as e:
-        import traceback
         return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
 
 
