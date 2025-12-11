@@ -68,6 +68,7 @@ jobs:
           "$PYTHON_EXEC" -m pytest
 
       - name: Stop Docker Services and Remove Volumes
+        if: always()
         run: docker compose down -v
 
       - name: Log in to GitHub Container Registry
