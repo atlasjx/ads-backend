@@ -766,7 +766,6 @@ def update_movie(movie_id):
     
 @app.route("/api/movies/search", methods=['GET'])
 def search_movies():
-    """Search functionality with genre filter and sorting"""
     query = request.args.get('q', '')
     page = request.args.get('page', 1, type=int)
     limit = request.args.get('limit', 20, type=int)
@@ -774,7 +773,6 @@ def search_movies():
     sort = request.args.get('sort', "popularity")
     offset = (page - 1) * limit
 
-    # Allowed sort mappings
     sort_map = {
         "title_asc": "title ASC",
         "title_desc": "title DESC",
@@ -787,77 +785,73 @@ def search_movies():
     order_clause = sort_map.get(sort, "popularity DESC")
 
     try:
-        conn = get_db_connection()
-        cur = conn.cursor()
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
 
-        # Base query
-        base_query = """
-            SELECT m.id, m.imdb_id, m.title, m.overview, m.release_date,
-                   m.popularity, m.vote_average, m.vote_count, m.poster_path
-            FROM movies m
-           ORDER BY m.id DESC
-        """
+                base_query = """
+                    SELECT m.id, m.imdb_id, m.title, m.overview, m.release_date,
+                           m.popularity, m.vote_average, m.vote_count, m.poster_path
+                    FROM movies m
+                """
 
-        where_clauses = ["(m.title ILIKE %s OR m.overview ILIKE %s)"]
-        params = [f"%{query}%", f"%{query}%"]
+                # --- MUDANÇA 1: Pesquisa apenas no Título ---
+                # Removemos o "OR m.overview" e removemos o segundo parâmetro da lista
+                where_clauses = ["m.title ILIKE %s"]
+                params = [f"%{query}%"]
 
-        # Handle genre filtering if provided
-        if genre and genre.lower() != "all":
-            base_query += """
-                JOIN movie_genres mg ON m.id = mg.movie_id
-                JOIN genres g ON mg.genre_id = g.id
-            """
-            where_clauses.append("g.name = %s")
-            params.append(genre)
+                if genre and genre.lower() != "all":
+                    base_query += """
+                        JOIN movie_genres mg ON m.id = mg.movie_id
+                        JOIN genres g ON mg.genre_id = g.id
+                    """
+                    where_clauses.append("g.name = %s")
+                    params.append(genre)
 
-        # Build WHERE clause
-        if where_clauses:
-            base_query += " WHERE " + " AND ".join(where_clauses)
+                if where_clauses:
+                    base_query += " WHERE " + " AND ".join(where_clauses)
 
-        # Final SQL with sorting + pagination
-        final_query = f"""
-            {base_query}
-            ORDER BY {order_clause}
-            LIMIT %s OFFSET %s
-        """
-        params.extend([limit, offset])
+                final_query = f"""
+                    {base_query}
+                    ORDER BY {order_clause}
+                    LIMIT %s OFFSET %s
+                """
+                
+                params.extend([limit, offset])
 
-        cur.execute(final_query, params)
-        movies = cur.fetchall()
+                cur.execute(final_query, params)
+                movies = cur.fetchall() 
 
-        # Count for pagination
-        count_query = "SELECT COUNT(*) FROM movies m"
-        count_params = []
+                # --- MUDANÇA 2: Count Query ajustada para apenas Título ---
+                count_params = [f"%{query}%"]
+                count_query = "SELECT COUNT(*) as count FROM movies m"
+                
+                if genre and genre.lower() != "all":
+                    count_query += """
+                        JOIN movie_genres mg ON m.id = mg.movie_id
+                        JOIN genres g ON mg.genre_id = g.id
+                        WHERE m.title ILIKE %s AND g.name = %s
+                    """
+                    count_params.append(genre)
+                else:
+                    count_query += " WHERE m.title ILIKE %s"
 
-        if genre and genre.lower() != "all":
-            count_query += """
-                JOIN movie_genres mg ON m.id = mg.movie_id
-                JOIN genres g ON mg.genre_id = g.id
-                WHERE (m.title ILIKE %s OR m.overview ILIKE %s) AND g.name = %s
-            """
-            count_params = [f"%{query}%", f"%{query}%", genre]
-        else:
-            count_query += " WHERE m.title ILIKE %s OR m.overview ILIKE %s"
-            count_params = [f"%{query}%", f"%{query}%"]
-
-        cur.execute(count_query, count_params)
-        total = cur.fetchone()['count']
-
-        cur.close()
-        conn.close()
+                cur.execute(count_query, count_params)
+                total_result = cur.fetchone()
+                
+                if isinstance(total_result, dict):
+                    total = total_result['count']
+                else:
+                    total = total_result[0]
 
         return jsonify({
             'movies': movies,
-            'query': query,
-            'genre': genre,
-            'sort': sort,
             'page': page,
-            'limit': limit,
             'total': total,
             'total_pages': (total + limit - 1) // limit
         }), 200
 
     except Exception as e:
+        print(f"SQL Error: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 @app.route("/api/movie/<int:movie_id>/rating", methods=['POST'])
