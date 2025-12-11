@@ -786,19 +786,37 @@ def search_movies():
 
     try:
         with get_db_connection() as conn:
-            with conn.cursor() as cur:
+            with conn.cursor() as cur: # Idealmente usa cursor_factory=RealDictCursor
 
+                # --- MUDANÇA AQUI ---
+                # Adicionei uma subquery (linha 4 a 8 do SQL abaixo)
+                # Ela vai buscar todos os géneros associados a este ID de filme
+                # e devolve-os como uma lista (ARRAY)
                 base_query = """
-                    SELECT m.id, m.imdb_id, m.title, m.overview, m.release_date,
-                           m.popularity, m.vote_average, m.vote_count, m.poster_path
+                    SELECT 
+                        m.id, 
+                        m.imdb_id, 
+                        m.title, 
+                        m.overview, 
+                        m.release_date,
+                        m.popularity, 
+                        m.vote_average, 
+                        m.vote_count, 
+                        m.poster_path,
+                        (
+                            SELECT ARRAY_AGG(g_sub.name)
+                            FROM movie_genres mg_sub
+                            JOIN genres g_sub ON mg_sub.genre_id = g_sub.id
+                            WHERE mg_sub.movie_id = m.id
+                        ) as debug_genres
                     FROM movies m
                 """
 
-                # --- MUDANÇA 1: Pesquisa apenas no Título ---
-                # Removemos o "OR m.overview" e removemos o segundo parâmetro da lista
+                # Pesquisa apenas no Título
                 where_clauses = ["m.title ILIKE %s"]
                 params = [f"%{query}%"]
 
+                # Lógica de Filtro (JOIN apenas se necessário para filtrar)
                 if genre and genre.lower() != "all":
                     base_query += """
                         JOIN movie_genres mg ON m.id = mg.movie_id
@@ -821,7 +839,7 @@ def search_movies():
                 cur.execute(final_query, params)
                 movies = cur.fetchall() 
 
-                # --- MUDANÇA 2: Count Query ajustada para apenas Título ---
+                # --- Count Query (Mantém-se igual) ---
                 count_params = [f"%{query}%"]
                 count_query = "SELECT COUNT(*) as count FROM movies m"
                 
@@ -853,7 +871,7 @@ def search_movies():
     except Exception as e:
         print(f"SQL Error: {str(e)}")
         return jsonify({'error': str(e)}), 500
-
+    
 @app.route("/api/movie/<int:movie_id>/rating", methods=['POST'])
 @require_auth
 def submit_rating(movie_id):
@@ -1019,24 +1037,12 @@ def get_home():
 @require_auth
 def get_home_recommendations():
     """Get main catalog with recommendation system"""
-    user_id = None
-
-    # Check if user is authenticated (authentication logic remains the same)
-    token = request.headers.get('Authorization')
-    if token and token.startswith('Bearer '):
-        token = token = token[7:]
-    
-    # NOTE: The @require_auth decorator already handles authentication and sets request.user_id. 
-    # The token extraction logic below is somewhat redundant if @require_auth is active 
-    # but is kept for robustness in case @require_auth is temporarily commented out.
-    user_id = active_tokens.get(token) if token else request.user_id
-    
-    # --- FIX: Initialize response dictionary ---
-    response = {} 
-    
-    # --- END FIX ---
+    user_id = request.user_id
 
     try:
+        # ✅ FIX: Initialize the empty dictionary first
+        response = {} 
+
         conn = get_db_connection()
         cur = conn.cursor()
 
@@ -1055,7 +1061,7 @@ def get_home_recommendations():
                     SELECT DISTINCT mg2.genre_id
                     FROM ratings r
                     JOIN movie_genres mg2 ON r.movie_id = mg2.movie_id
-                    WHERE r.user_id = %s AND r.rating >= 7
+                    WHERE r.user_id = %s
                 )
                 AND m.id NOT IN (
                     SELECT movie_id FROM ratings WHERE user_id = %s
@@ -1067,10 +1073,8 @@ def get_home_recommendations():
             )
             recommended_movies = cur.fetchall()
             
-            # --- IMPROVEMENT: Set user_id from decorator (if not set above)
-            # This ensures the decorator's result is prioritized.
+            # Now this line works because 'response' exists
             response['user_id'] = user_id
-            # --- END IMPROVEMENT
 
         cur.close()
         conn.close()
@@ -1082,15 +1086,16 @@ def get_home_recommendations():
              # Add a message if user is authenticated but no recommendations are found
              response['message'] = 'No personalized recommendations found based on your high ratings (>= 7).'
         else:
-             # Add a message if the user is not authenticated or a generic fallback
+             # Add a message if the user is not authenticated
              response['message'] = 'User not authenticated. No personalized recommendations available.'
-
 
         return jsonify(response), 200
 
     except Exception as e:
+        # It is good practice to print the error to your console for debugging
+        print(f"Error: {e}") 
         return jsonify({'error': str(e)}), 500
-
+    
 @app.route('/api/profile', methods=['GET'])
 @require_auth
 def get_profile():
