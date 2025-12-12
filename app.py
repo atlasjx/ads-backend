@@ -24,9 +24,7 @@ DB_CONFIG = {
     'port': os.getenv('DATABASE_PORT', 5432)
 }
 
-# Simple token storage (in production, use Redis or database)
 active_tokens = {}
-
 
 def get_db_connection():
     """Create and return a database connection"""
