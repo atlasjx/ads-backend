@@ -638,7 +638,7 @@ def get_myMovies():
     except Exception as e:
         return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
 
-@app.route("/api/movie", methods=['POST'])
+@app.route("/api/admin/movie", methods=['POST'])
 @require_auth
 @require_admin
 def insert_movie():
@@ -728,8 +728,8 @@ def insert_movie():
         return jsonify({'error': str(e)}), 500
 
 @app.route("/api/admin/movies/<int:movie_id>", methods=['PUT'])
-@require_auth   # Garante que está logado
-@require_admin  # Garante que é admin
+@require_auth   
+@require_admin  
 def update_movie(movie_id):
     """
     Atualiza os dados de um filme existente.
@@ -948,7 +948,7 @@ def submit_rating(movie_id):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@app.route("/api/movie/<int:movie_id>/rating", methods=['DELETE'])
+@app.route("/api/admin/movie/<int:movie_id>/rating", methods=['DELETE'])
 @require_auth
 @require_admin
 def delete_rating(movie_id):

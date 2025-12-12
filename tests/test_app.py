@@ -222,6 +222,7 @@ def test_search_movies():
     else:
         pytest.fail("O filme 'Pytest Movie Admin Insert' não foi encontrado. O ID não pôde ser salvo.")
 
+
 def test_submit_rating(token):
     """Test rating submission."""
     # NÃO passamos TEST_MOVIE_ID como argumento. Acedemos à global.
@@ -242,6 +243,62 @@ def test_submit_rating(token):
 
     assert res.status_code in (200, 201)
     assert "rating_id" in data
+
+
+def test_update_movie_as_admin():
+    """Test updating a movie (Requires Admin Permissions)."""
+    
+    # 1. Verificar se temos um ID de filme para atualizar
+    global TEST_MOVIE_ID
+    if TEST_MOVIE_ID is None:
+        pytest.skip("Skipping: ID do filme não foi encontrado nos testes anteriores.")
+
+    # 2. Obter credenciais de Admin (Env vars ou default)
+    admin_username = os.environ.get('ADMIN_USERNAME', 'admin')
+    admin_password = os.environ.get('ADMIN_PASSWORD', 'admin123')
+
+    # 3. Fazer Login como Admin para obter o token correto
+    login_res = requests.post(f"{API}/auth/login", json={
+        "username": admin_username,
+        "password": admin_password
+    })
+    
+    login_data = log_roundtrip(login_res, "LOGIN ADMIN FOR UPDATE")
+    
+    if "token" not in login_data:
+        pytest.fail("Falha ao logar como Admin. Não é possível testar o update.")
+
+    admin_token = login_data["token"]
+    headers = {"Authorization": f"Bearer {admin_token}"}
+
+    # 4. Preparar dados para atualização (Update Parcial)
+    # Vamos mudar o título e o overview
+    new_title = f"Updated Title {int(time.time())}"
+    update_payload = {
+        "title": new_title,
+        "overview": "This overview was updated automatically by the pytest suite.",
+        "vote_average": 9.9 # Testar atualização de número
+    }
+
+    # 5. Enviar pedido PUT
+    # Rota: /api/admin/movies/<id>
+    res = requests.put(
+        f"{API}/admin/movies/{TEST_MOVIE_ID}",
+        json=update_payload,
+        headers=headers
+    )
+    
+    data = log_roundtrip(res, "UPDATE MOVIE (ADMIN)")
+
+    # 6. Asserções
+    assert res.status_code == 200
+    assert data["message"] == "Movie updated successfully"
+    assert int(data["movie_id"]) == int(TEST_MOVIE_ID)
+    
+    # Verifica se a API confirmou quais campos foram alterados
+    assert "title" in data["updated_fields"]
+    assert "overview" in data["updated_fields"]
+    assert "vote_average" in data["updated_fields"]
 
 
 def test_home_recommendations(token):
@@ -324,6 +381,109 @@ def test_delete_rating():
     
     assert res.status_code == 200
     assert data["message"] == "Rating deleted successfully"
+
+
+def test_get_profile_success(token, test_user):
+    """
+    Test retrieving the authenticated user's profile.
+    Valida estrutura do User e das Ratings.
+    """
+    headers = {"Authorization": f"Bearer {token}"}
+    
+    # 1. Obter Perfil
+    res = requests.get(f"{API}/profile", headers=headers)
+    
+    data = log_roundtrip(res, "GET PROFILE")
+
+    # 2. Asserções
+    assert res.status_code == 200
+    
+    # Valida objeto 'user'
+    assert "user" in data
+    # Nota: Se outros testes correram antes e mudaram o username, isto pode falhar se compararmos estritamente com test_user fixture.
+    # Por segurança, validamos se os campos existem.
+    assert "id" in data["user"]
+    assert "email" in data["user"]
+    assert "role" in data["user"]
+    
+    # Valida lista 'recent_ratings'
+    assert "recent_ratings" in data
+    assert isinstance(data["recent_ratings"], list)
+
+
+def test_update_profile_info(token):
+    """
+    Test updating user details (Username & Email).
+    """
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Gera novos dados únicos para evitar conflitos
+    new_username = f"UpdatedUser_{int(time.time())}"
+    new_email = f"updated_{int(time.time())}@test.com"
+
+    payload = {
+        "username": new_username,
+        "email": new_email
+    }
+
+    # 1. Enviar pedido de atualização
+    res = requests.put(f"{API}/profile", json=payload, headers=headers)
+    
+    data = log_roundtrip(res, "UPDATE PROFILE INFO")
+
+    # 2. Asserções
+    assert res.status_code == 200
+    assert data["user"]["username"] == new_username
+    assert data["user"]["email"] == new_email
+    assert data["message"] == "Profile and ratings updated successfully"
+
+
+def test_update_profile_ratings(token):
+    """
+    Test updating ratings via the profile endpoint (Batch Update).
+    """
+    global TEST_MOVIE_ID
+    if TEST_MOVIE_ID is None:
+        pytest.skip("Skipping: ID do filme não foi encontrado.")
+
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Define uma nova nota para o filme guardado na variável global
+    new_rating_value = 10
+    
+    payload = {
+        # Não enviamos username/email, apenas ratings
+        "recent_ratings": [
+            {
+                "movie_id": TEST_MOVIE_ID,
+                "rating": new_rating_value
+            }
+        ]
+    }
+
+    # 1. Enviar atualização
+    res = requests.put(f"{API}/profile", json=payload, headers=headers)
+    
+    data = log_roundtrip(res, "UPDATE PROFILE RATINGS")
+
+    # 2. Asserções
+    assert res.status_code == 200
+    # Verifica se a contagem de updates está correta
+    assert data["ratings_updated_count"] == 1
+    
+    # 3. Verificação Dupla (GET)
+    # Vamos buscar o perfil novamente para garantir que a nota é 10
+    get_res = requests.get(f"{API}/profile", headers=headers)
+    get_data = get_res.json()
+    
+    # Procura a rating do filme específico na lista
+    found_rating = None
+    for r in get_data["recent_ratings"]:
+        if r["movie_id"] == TEST_MOVIE_ID:
+            found_rating = r["rating"]
+            break
+            
+    assert found_rating == new_rating_value, f"Rating devia ser {new_rating_value}, mas veio {found_rating}"
 
 
 def test_logout_success(token):
