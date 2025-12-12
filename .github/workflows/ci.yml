@@ -60,6 +60,13 @@ jobs:
       - name: Wait for API to be Ready
         run: timeout 60s bash -c 'until nc -z localhost 80; do echo "Aguardando API em localhost:80..."; sleep 3; done'
 
+      - name: Run tests
+        env:
+          PYTHONPATH: .
+          API_HOST: http://localhost
+        run: |
+          "$PYTHON_EXEC" -m pytest
+
       #- name: Stop Docker Services and Remove Volumes
       #  if: always()
       #  run: docker compose down -v
