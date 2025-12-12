@@ -54,9 +54,9 @@ jobs:
       - name: Start Docker Services (DB, Web, Populate)
         run: docker compose up -d --build
 
-      - name: Wait for all services to be healthy
-        run: docker compose wait
-        
+      - name: Wait for DB and Web to be healthy
+        run: docker compose wait db web
+
       - name: Run tests
         env:
           PYTHONPATH: .
