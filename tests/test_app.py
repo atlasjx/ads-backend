@@ -53,8 +53,8 @@ def log_roundtrip(response, label="API CALL"):
         try:
             body_str = response.request.body.decode('utf-8') if isinstance(response.request.body, bytes) else str(response.request.body)
             logger.info(f"📤 PAYLOAD:  {body_str[:200]}..." if len(body_str) > 200 else f"📤 PAYLOAD:  {body_str}")
-        except:
-            pass
+        except Exception as e:
+            logger.debug(f"Failed to log request body: {e}")
 
     status_emoji = "✅" if response.status_code < 400 else "❌"
     logger.info(f"📥 RESPONSE: {status_emoji} Status {response.status_code} (Time: {response.elapsed.total_seconds()}s)")
