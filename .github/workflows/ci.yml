@@ -54,8 +54,11 @@ jobs:
       - name: Start Docker Services (DB, Web, Populate)
         run: docker compose up -d --build
 
-      - name: Wait for DB and Web to be healthy
-        run: docker compose wait db web
+      - name: Install Netcat
+        run: sudo apt-get update && sudo apt-get install -y netcat-openbsd
+
+      - name: Wait for API to be Ready
+        run: timeout 60s bash -c 'until nc -z localhost 80; do echo "Aguardando API em localhost:80..."; sleep 3; done'
 
       - name: Run tests
         env:
