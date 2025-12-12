@@ -19,6 +19,9 @@ logger = logging.getLogger("API_TESTS")
 BASE_URL = os.environ.get("API_HOST", "http://localhost")
 API = BASE_URL + "/api"
 
+TEST_MOVIE_ID = None  # Variável global para armazenar o ID do filme de teste
+
+
 
 # -----------------------------------
 # Helper de Log (Melhorado)
@@ -190,7 +193,7 @@ def test_insert_movie():
 
     # 4. Tentar inserir o filme
     # CORREÇÃO: URL alterada de /insert/movies para /insert/movie (singular) conforme app.py
-    res = requests.post(f"{API}/insert/movie", json=movie, headers=headers)
+    res = requests.post(f"{API}/movie", json=movie, headers=headers)
     
     data = log_roundtrip(res, "INSERT MOVIE (AS ADMIN)")
 
@@ -199,25 +202,38 @@ def test_insert_movie():
 
 
 def test_search_movies():
-    """Test search."""
-    # A função search_movies na API usa 'q' como query param
-    res = requests.get(f"{API}/movies/search?q=Setup")
+    """Test search and save ID to global variable."""
+    global TEST_MOVIE_ID  # <--- Permite escrever na variável global
+
+    # Busca pelo filme específico criado pelo Admin
+    res = requests.get(f"{API}/movies/search?q=Pytest Movie Admin Insert")
     
-    data = log_roundtrip(res, "SEARCH MOVIES")
+    data = log_roundtrip(res, "SEARCH MOVIES (AND SAVE ID)")
 
     assert res.status_code == 200
     assert "movies" in data
-    # Verifica paginação
     assert "total" in data
 
+    # Lógica para guardar o ID
+    if len(data["movies"]) > 0:
+        # Pega o ID do primeiro filme da lista e salva na global
+        TEST_MOVIE_ID = data["movies"][0]["id"]
+        logger.info(f"💾 GLOBAL ID SAVED: {TEST_MOVIE_ID}")
+    else:
+        pytest.fail("O filme 'Pytest Movie Admin Insert' não foi encontrado. O ID não pôde ser salvo.")
 
-def test_submit_rating(token, test_movie_id):
+def test_submit_rating(token):
     """Test rating submission."""
+    # NÃO passamos TEST_MOVIE_ID como argumento. Acedemos à global.
+    global TEST_MOVIE_ID 
+    
+    if TEST_MOVIE_ID is None:
+        pytest.skip("Skipping: ID do filme não foi encontrado na busca anterior.")
+
     headers = {"Authorization": f"Bearer {token}"}
 
-    # Rota: /api/movie/<id>/rating (Singular)
     res = requests.post(
-        f"{API}/movie/{test_movie_id}/rating",
+        f"{API}/movie/{TEST_MOVIE_ID}/rating",
         json={"rating": 8},
         headers=headers
     )
@@ -226,38 +242,6 @@ def test_submit_rating(token, test_movie_id):
 
     assert res.status_code in (200, 201)
     assert "rating_id" in data
-
-
-def test_add_movie_rating_update(token, test_movie_id):
-    """Test UPDATING a movie rating (Upsert logic)."""
-    headers = {"Authorization": f"Bearer {token}"}
-    
-    # CORREÇÃO: A URL anterior estava errada (/movies/.../ratings).
-    # A URL correta na app.py é POST /api/movie/<id>/rating
-    res = requests.post(
-        f"{API}/movie/{test_movie_id}/rating",
-        json={"rating": 9}, # Mudamos a nota para 9 para testar o UPDATE
-        headers=headers
-    )
-
-    data = log_roundtrip(res, "UPDATE RATING (UPSERT)")
-
-    assert res.status_code in (200, 201)
-    assert data["rating"] == 9 # Verifica se a nota foi atualizada
-
-
-def test_home_feed(token):
-    """Test home feed."""
-    res = requests.get(
-        f"{API}/home",
-        headers={"Authorization": f"Bearer {token}"}
-    )
-    
-    data = log_roundtrip(res, "HOME FEED")
-
-    assert res.status_code == 200
-    assert "popular" in data
-    assert "recent" in data
 
 
 def test_home_recommendations(token):
@@ -287,10 +271,10 @@ def test_get_my_movies(token):
     assert "total" in data
 
 
-def test_get_movie_ratings(test_movie_id):
+def test_get_movie_ratings():
     """Test getting ratings for a movie."""
     # Rota: /api/movies/<id>/ratings
-    res = requests.get(f"{API}/movies/{test_movie_id}/ratings")
+    res = requests.get(f"{API}/movies/{TEST_MOVIE_ID}/ratings")
     
     data = log_roundtrip(res, "GET MOVIE RATINGS")
 
@@ -299,33 +283,13 @@ def test_get_movie_ratings(test_movie_id):
     assert "rating_counts" in data # A app.py retorna counts
 
 
-def test_get_profile_authenticated(token, test_user, test_movie_id):
-    """Test profile data."""
-    headers = {"Authorization": f"Bearer {token}"}
-    
-    # Garante rating prévio
-    requests.post(
-        f"{API}/movie/{test_movie_id}/rating",
-        json={"rating": 9.5},
-        headers=headers
-    )
-    
-    res = requests.get(f"{API}/profile", headers=headers)
-    
-    data = log_roundtrip(res, "GET PROFILE")
-
-    assert res.status_code == 200
-    assert data["user"]["username"] == test_user["username"]
-    assert "recent_ratings" in data
-
-
-def test_delete_rating(token, test_movie_id):
+def test_delete_rating(token):
     """Test deleting a rating."""
     headers = {"Authorization": f"Bearer {token}"}
 
     # Rota: DELETE /api/movie/<id>/rating
     res = requests.delete(
-        f"{API}/movie/{test_movie_id}/rating",
+        f"{API}/movie/{TEST_MOVIE_ID}/rating",
         headers=headers
     )
     

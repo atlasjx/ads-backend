@@ -649,7 +649,7 @@ def get_myMovies():
     except Exception as e:
         return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
 
-@app.route("/api/insert/movie", methods=['POST'])
+@app.route("/api/movie", methods=['POST'])
 @require_auth
 @require_admin
 def insert_movie():
@@ -961,6 +961,7 @@ def submit_rating(movie_id):
 
 @app.route("/api/movie/<int:movie_id>/rating", methods=['DELETE'])
 @require_auth
+@require_admin
 def delete_rating(movie_id):
     """
     Remove a avaliação do utilizador autenticado para um filme específico.
