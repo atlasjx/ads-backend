@@ -283,17 +283,44 @@ def test_get_movie_ratings():
     assert "rating_counts" in data # A app.py retorna counts
 
 
-def test_delete_rating(token):
-    """Test deleting a rating."""
-    headers = {"Authorization": f"Bearer {token}"}
+def test_delete_rating():
+    """Test deleting a rating (Requires Admin because of @require_admin)."""
+    
+    # 1. Verificar se temos um ID de filme
+    global TEST_MOVIE_ID
+    if TEST_MOVIE_ID is None:
+        pytest.skip("Skipping: ID do filme não foi encontrado.")
 
+    # 2. Obter credenciais e Logar como Admin
+    admin_username = os.environ.get('ADMIN_USERNAME', 'admin')
+    admin_password = os.environ.get('ADMIN_PASSWORD', 'admin123')
+
+    login_res = requests.post(f"{API}/auth/login", json={
+        "username": admin_username,
+        "password": admin_password
+    })
+    
+    login_data = log_roundtrip(login_res, "LOGIN ADMIN FOR DELETE")
+    admin_token = login_data["token"]
+    headers = {"Authorization": f"Bearer {admin_token}"}
+
+    # 3. SETUP: O Admin precisa criar uma avaliação antes de a poder apagar
+    # (Caso contrário, o DELETE retornaria 404 porque o rating não existe)
+    setup_res = requests.post(
+        f"{API}/movie/{TEST_MOVIE_ID}/rating",
+        json={"rating": 5},
+        headers=headers
+    )
+    assert setup_res.status_code in (200, 201), "Falha ao criar avaliação de setup para o Admin"
+
+    # 4. TESTE: Apagar a avaliação
     # Rota: DELETE /api/movie/<id>/rating
     res = requests.delete(
         f"{API}/movie/{TEST_MOVIE_ID}/rating",
         headers=headers
     )
     
-    data = log_roundtrip(res, "DELETE RATING")
+    data = log_roundtrip(res, "DELETE RATING (AS ADMIN)")
     
     assert res.status_code == 200
     assert data["message"] == "Rating deleted successfully"
