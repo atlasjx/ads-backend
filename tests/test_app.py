@@ -28,7 +28,7 @@ def test_user():
     return {
         "username": f"pytest_user_{ts}",
         "email": f"pytest_email_{ts}@test.com",
-        "password": "testpassword123"
+        "password": "Testpassword123"
     }
 
 
