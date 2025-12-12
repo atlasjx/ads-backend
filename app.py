@@ -1318,7 +1318,32 @@ def update_profile():
     except Exception as e:
         return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
 
+@app.route("/api/admin/movies/<int:movie_id>", methods=['DELETE'])
+@require_auth
+@require_admin
+def delete_movie(movie_id):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
 
+        cur.execute("DELETE FROM movie_genres WHERE movie_id = %s", (movie_id,))
+
+        cur.execute("DELETE FROM ratings WHERE movie_id = %s", (movie_id,))
+
+        cur.execute("DELETE FROM movies WHERE id = %s RETURNING id", (movie_id,))
+        deleted = cur.fetchone()
+
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        if not deleted:
+            return jsonify({'error': 'Movie not found'}), 404
+
+        return jsonify({'message': 'Movie deleted successfully'}), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 
 
