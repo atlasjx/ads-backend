@@ -10,6 +10,7 @@ import re
 import logging
 from psycopg2.errorcodes import UNIQUE_VIOLATION
 import traceback
+import json
 
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": "*"}})
@@ -650,19 +651,58 @@ def get_myMovies():
     except Exception as e:
         return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
 
-@app.route("/api/movies", methods=['POST'])
+@app.route("/api/insert/movie", methods=['POST'])
 @require_auth
+@require_admin
 def insert_movie():
     data = request.get_json()
 
+    # Validação básica
     if not data or 'title' not in data:
         return jsonify({'error': 'Missing required field: title'}), 400
 
     try:
+        # Prepara os dados, garantindo que campos opcionais sejam None se não existirem
+        # Também trata listas (como genres) para strings JSON se necessário
+        
+        raw_genres = data.get('raw_genres', [])
+        if isinstance(raw_genres, (list, dict)):
+            raw_genres = json.dumps(raw_genres)
+
+        raw_companies = data.get('raw_production_companies', [])
+        if isinstance(raw_companies, (list, dict)):
+            raw_companies = json.dumps(raw_companies)
+
+        # Tratamento especial para data vazia
+        release_date = data.get('release_date')
+        if release_date == "":
+            release_date = None
+
+        movie_params = {
+            'imdb_id': data.get('imdb_id'),
+            'title': data['title'], # Obrigatório
+            'original_title': data.get('original_title', data['title']),
+            'overview': data.get('overview'),
+            'release_date': release_date,
+            'adult': bool(data.get('adult', False)),
+            'budget': int(data.get('budget', 0)),
+            'revenue': int(data.get('revenue', 0)),
+            'runtime': float(data.get('runtime', 0.0)) if data.get('runtime') else None,
+            'popularity': float(data.get('popularity', 0.0)),
+            'vote_average': float(data.get('vote_average', 0.0)),
+            'vote_count': int(data.get('vote_count', 0)),
+            'original_language': data.get('original_language', 'en'),
+            'status': data.get('status', 'Released'),
+            'tagline': data.get('tagline'),
+            'homepage': data.get('homepage'),
+            'poster_path': data.get('poster_path'),
+            'raw_genres': raw_genres,
+            'raw_production_companies': raw_companies
+        }
+
         conn = get_db_connection()
         cur = conn.cursor()
 
-        # Insert movie without specifying ID (auto-generated)
         cur.execute(
             """
             INSERT INTO movies (
@@ -677,12 +717,15 @@ def insert_movie():
                 %(poster_path)s, %(raw_genres)s, %(raw_production_companies)s
             ) RETURNING id;
             """,
-            data
+            movie_params
         )
 
         movie_id = cur.fetchone()['id']
-
         conn.commit()
+        
+        # Opcional: Se quiseres inserir na tabela de junção movie_genres logo aqui, 
+        # terias que processar o array de IDs de géneros.
+
         cur.close()
         conn.close()
 
@@ -692,7 +735,10 @@ def insert_movie():
         }), 201
 
     except Exception as e:
-        return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
+        # Se usares traceback, não esqueças de importar 'traceback' no topo
+        import traceback
+        print(traceback.format_exc()) # Log no console do servidor
+        return jsonify({'error': str(e)}), 500
 
 @app.route("/api/admin/movies/<int:movie_id>", methods=['PUT'])
 @require_auth   # Garante que está logado
