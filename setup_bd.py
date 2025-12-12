@@ -26,16 +26,31 @@ from pathlib import Path
 from datetime import datetime
 import logging
 from psycopg2.extras import execute_values
-
+from urllib.parse import urlparse
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# Database configuration
-DB_HOST = os.environ.get('DATABASE_HOST', 'localhost')
-DB_PORT = os.environ.get('DATABASE_PORT', '5432')
-DB_NAME = os.environ.get('DATABASE_NAME', 'movies_db')
-DB_USER = os.environ.get('DATABASE_USER', 'postgres')
-DB_PASS = os.environ.get('DATABASE_PASSWORD', '')
+DATABASE_URL = os.environ.get("DATABASE_URL")
+
+if DATABASE_URL:
+    parsed = urlparse(DATABASE_URL)
+
+    DB_HOST = parsed.hostname
+    DB_PORT = parsed.port
+    DB_NAME = parsed.path.lstrip("/")
+    DB_USER = parsed.username
+    DB_PASS = parsed.password
+
+    logging.info("Usando configuração de base de dados a partir de DATABASE_URL")
+else:
+    # Fall back para variáveis tradicionais
+    DB_HOST = os.environ.get('DATABASE_HOST', 'localhost')
+    DB_PORT = os.environ.get('DATABASE_PORT', '5432')
+    DB_NAME = os.environ.get('DATABASE_NAME', 'movies_db')
+    DB_USER = os.environ.get('DATABASE_USER', 'postgres')
+    DB_PASS = os.environ.get('DATABASE_PASSWORD', '')
+
+    logging.info("Usando DATABASE_HOST / DATABASE_USER / etc. (DATABASE_URL não encontrada)")
 
 # Dataset configuration
 KAGGLE_DATASET_URL = "https://www.kaggle.com/api/v1/datasets/download/rounakbanik/the-movies-dataset"
