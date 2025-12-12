@@ -431,7 +431,6 @@ def get_movie_ratings_ai(movie_id):
                      return jsonify({
                         "movie_id": movie_id,
                         "average_rating": None,
-                        "rating_counts": {1: 0, 2: 0, 3: 0, 4: 0, 5: 0},
                         "ratings": []
                     })
 
@@ -453,17 +452,7 @@ def get_movie_ratings_ai(movie_id):
             
             # Média real (calculada pelo SQL)
             "average_rating": stats['avg'], 
-            
-            # Contagens reais (calculadas pelo SQL)
-            # Convertemos para int porque o SUM do SQL pode vir como Decimal/Long
-            "rating_counts": {
-                1: int(stats['c1'] or 0),
-                2: int(stats['c2'] or 0),
-                3: int(stats['c3'] or 0),
-                4: int(stats['c4'] or 0),
-                5: int(stats['c5'] or 0)
-            },
-            
+
             # A lista de reviews (agora paginada, mas com o formato de objeto igual)
             "ratings": [
                 {
