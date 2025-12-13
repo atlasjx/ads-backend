@@ -367,6 +367,9 @@ def load_movies_and_ratings(movies_csv_path, ratings_csv_path, conn):
     """
     cur = conn.cursor()
 
+    MAX_MOVIES = int(os.environ.get('MAX_MOVIES', '500'))
+    logging.info(f"Limiting to {MAX_MOVIES} movies to save memory")
+
     # ----------------------------
     # Step 1: Load ratings CSV into memory map
     # ----------------------------
@@ -395,6 +398,10 @@ def load_movies_and_ratings(movies_csv_path, ratings_csv_path, conn):
     with open(movies_csv_path, newline='', encoding='utf-8') as movies_file:
         reader = csv.DictReader(movies_file)
         for row_num, row in enumerate(reader, start=1):
+            if len(movies_to_insert) >= MAX_MOVIES:
+                logging.info(f"Reached limit of {MAX_MOVIES} movies. Stopping processing.")
+                break
+                
             try:
                 # Parse genres
                 try:
