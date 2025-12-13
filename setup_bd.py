@@ -36,21 +36,39 @@ if DATABASE_URL:
     parsed = urlparse(DATABASE_URL)
 
     DB_HOST = parsed.hostname
-    DB_PORT = parsed.port
+    DB_PORT = parsed.port or 5432  # Default to 5432 if port not specified
     DB_NAME = parsed.path.lstrip("/")
     DB_USER = parsed.username
     DB_PASS = parsed.password
 
-    logging.info("Usando configuração de base de dados a partir de DATABASE_URL")
+    # Ensure DB_PORT is an integer
+    DB_PORT = int(DB_PORT)
+
+    logging.info(f"Usando configuração de base de dados a partir de DATABASE_URL")
+    logging.info(f"DB_HOST={DB_HOST}, DB_PORT={DB_PORT}, DB_NAME={DB_NAME}, DB_USER={DB_USER}")
+    
+    # Validate that we got all required values
+    if not DB_HOST:
+        logging.error("DATABASE_URL provided but hostname is missing!")
+        sys.exit(1)
 else:
     # Fall back para variáveis tradicionais
-    DB_HOST = os.environ.get('DATABASE_HOST', 'localhost')
+    DB_HOST = os.environ.get('DATABASE_HOST')
     DB_PORT = os.environ.get('DATABASE_PORT', '5432')
     DB_NAME = os.environ.get('DATABASE_NAME', 'movies_db')
     DB_USER = os.environ.get('DATABASE_USER', 'postgres')
     DB_PASS = os.environ.get('DATABASE_PASSWORD', '')
 
+    # Ensure DB_PORT is an integer
+    DB_PORT = int(DB_PORT)
+
     logging.info("Usando DATABASE_HOST / DATABASE_USER / etc. (DATABASE_URL não encontrada)")
+    logging.info(f"DB_HOST={DB_HOST}, DB_PORT={DB_PORT}, DB_NAME={DB_NAME}, DB_USER={DB_USER}")
+    
+    # Validate that we have at least DB_HOST
+    if not DB_HOST:
+        logging.error("Neither DATABASE_URL nor DATABASE_HOST is set. Cannot connect to database.")
+        sys.exit(1)
 
 # Dataset configuration
 KAGGLE_DATASET_URL = "https://www.kaggle.com/api/v1/datasets/download/rounakbanik/the-movies-dataset"
