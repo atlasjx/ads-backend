@@ -41,13 +41,11 @@ if DATABASE_URL:
     DB_USER = parsed.username
     DB_PASS = parsed.password
 
-    # Ensure DB_PORT is an integer
     DB_PORT = int(DB_PORT)
 
-    logging.info(f"Usando configuração de base de dados a partir de DATABASE_URL")
+    logging.info("Usando configuração de base de dados a partir de DATABASE_URL")
     logging.info(f"DB_HOST={DB_HOST}, DB_PORT={DB_PORT}, DB_NAME={DB_NAME}, DB_USER={DB_USER}")
     
-    # Validate that we got all required values
     if not DB_HOST:
         logging.error("DATABASE_URL provided but hostname is missing!")
         sys.exit(1)
@@ -59,13 +57,11 @@ else:
     DB_USER = os.environ.get('DATABASE_USER', 'postgres')
     DB_PASS = os.environ.get('DATABASE_PASSWORD', '')
 
-    # Ensure DB_PORT is an integer
     DB_PORT = int(DB_PORT)
 
     logging.info("Usando DATABASE_HOST / DATABASE_USER / etc. (DATABASE_URL não encontrada)")
     logging.info(f"DB_HOST={DB_HOST}, DB_PORT={DB_PORT}, DB_NAME={DB_NAME}, DB_USER={DB_USER}")
     
-    # Validate that we have at least DB_HOST
     if not DB_HOST:
         logging.error("Neither DATABASE_URL nor DATABASE_HOST is set. Cannot connect to database.")
         sys.exit(1)
