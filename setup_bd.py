@@ -368,32 +368,17 @@ def load_movies_and_ratings(movies_csv_path, ratings_csv_path, conn):
     cur = conn.cursor()
 
     MAX_MOVIES = int(os.environ.get('MAX_MOVIES', '500'))
-    logging.info(f"Limiting to {MAX_MOVIES} movies to save memory")
+    MAX_RATINGS_PER_MOVIE = int(os.environ.get('MAX_RATINGS_PER_MOVIE', '100'))
+    logging.info(f"Limiting to {MAX_MOVIES} movies and {MAX_RATINGS_PER_MOVIE} ratings per movie to save memory")
 
     # ----------------------------
-    # Step 1: Load ratings CSV into memory map
-    # ----------------------------
-    logging.info("Loading ratings into memory...")
-    ratings_map = {}  # key: old CSV movieId, value: list of (user_id, rating, timestamp)
-    with open(ratings_csv_path, newline='', encoding='utf-8') as ratings_file:
-        reader = csv.DictReader(ratings_file)
-        for row in reader:
-            movie_id = str(row['movieId'])
-            ratings_map.setdefault(movie_id, []).append((
-                int(row['userId']),
-                float(row['rating']),
-                int(row['timestamp'])
-            ))
-
-    # ----------------------------
-    # Step 2: Process movies CSV
+    # Step 1: Process movies CSV first to get movie IDs we'll insert
     # ----------------------------
     logging.info("Processing movies CSV...")
     movies_to_insert = []
-    movie_id_map = {}  # CSV movie id -> DB movie id
+    target_movie_ids = set()  # CSV movie IDs we're going to insert
     genres_to_insert = set()
     movie_genres_to_insert = []
-    ratings_to_insert = []
 
     with open(movies_csv_path, newline='', encoding='utf-8') as movies_file:
         reader = csv.DictReader(movies_file)
@@ -403,6 +388,9 @@ def load_movies_and_ratings(movies_csv_path, ratings_csv_path, conn):
                 break
                 
             try:
+                csv_movie_id = str(row['id'])
+                target_movie_ids.add(csv_movie_id)
+                
                 # Parse genres
                 try:
                     genres_list = eval(row['genres']) if row.get('genres') else []
@@ -428,7 +416,7 @@ def load_movies_and_ratings(movies_csv_path, ratings_csv_path, conn):
                     row.get('overview'), release_date, adult, budget, revenue, runtime,
                     popularity, vote_average, vote_count, row.get('original_language'),
                     row.get('status'), row.get('tagline'), row.get('poster_path'),
-                    raw_genres, row['id']  # keep CSV id for mapping later
+                    raw_genres, csv_movie_id  # keep CSV id for mapping later
                 ))
 
                 # Collect genres
@@ -440,6 +428,31 @@ def load_movies_and_ratings(movies_csv_path, ratings_csv_path, conn):
 
             except Exception as e:
                 logging.error(f"Failed to process movie id={row.get('id')} at row {row_num}: {e}")
+
+    logging.info(f"Will insert {len(target_movie_ids)} movies. Loading ratings only for these movies...")
+
+    # ----------------------------
+    # Step 2: Load ratings CSV - only for movies we're inserting
+    # ----------------------------
+    logging.info("Loading ratings into memory (filtered by target movies)...")
+    ratings_map = {}  # key: old CSV movieId, value: list of (user_id, rating, timestamp)
+    ratings_count = 0
+    with open(ratings_csv_path, newline='', encoding='utf-8') as ratings_file:
+        reader = csv.DictReader(ratings_file)
+        for row in reader:
+            movie_id = str(row['movieId'])
+            if movie_id in target_movie_ids:
+                if movie_id not in ratings_map:
+                    ratings_map[movie_id] = []
+                if len(ratings_map[movie_id]) < MAX_RATINGS_PER_MOVIE:
+                    ratings_map[movie_id].append((
+                        int(row['userId']),
+                        float(row['rating']),
+                        int(row['timestamp'])
+                    ))
+                    ratings_count += 1
+
+    logging.info(f"Loaded {ratings_count} ratings for {len(ratings_map)} movies")
 
     # ----------------------------
     # Step 3: Insert genres
@@ -459,6 +472,8 @@ def load_movies_and_ratings(movies_csv_path, ratings_csv_path, conn):
     # ----------------------------
     logging.info(f"Inserting {len(movies_to_insert)} movies...")
     movie_id_map = {}
+    ratings_to_insert = []
+    
     for movie in movies_to_insert:
         cur.execute("""
             INSERT INTO movies(
@@ -505,22 +520,19 @@ def load_movies_and_ratings(movies_csv_path, ratings_csv_path, conn):
     # ----------------------------
     # Step 6: Insert ratings
     # ----------------------------
-
-    #cap ratings to 100k
-    ratings_to_insert = ratings_to_insert[:100000]
-
     logging.info(f"Inserting {len(ratings_to_insert)} ratings...")
-    execute_values(
-        cur,
-        """
-        INSERT INTO ratings(user_id, movie_id, rating, timestamp)
-        VALUES %s
-        ON CONFLICT (user_id, movie_id) DO UPDATE
-        SET rating = EXCLUDED.rating, timestamp = EXCLUDED.timestamp
-        """,
-        ratings_to_insert,
-        template="(%s, %s, %s, to_timestamp(%s))"
-    )
+    if ratings_to_insert:
+        execute_values(
+            cur,
+            """
+            INSERT INTO ratings(user_id, movie_id, rating, timestamp)
+            VALUES %s
+            ON CONFLICT (user_id, movie_id) DO UPDATE
+            SET rating = EXCLUDED.rating, timestamp = EXCLUDED.timestamp
+            """,
+            ratings_to_insert,
+            template="(%s, %s, %s, to_timestamp(%s))"
+        )
 
     conn.commit()
     cur.close()
