@@ -371,9 +371,7 @@ def load_movies_and_ratings(movies_csv_path, ratings_csv_path, conn):
     MAX_RATINGS_PER_MOVIE = int(os.environ.get('MAX_RATINGS_PER_MOVIE', '100'))
     logging.info(f"Limiting to {MAX_MOVIES} movies and {MAX_RATINGS_PER_MOVIE} ratings per movie to save memory")
 
-    # ----------------------------
-    # Step 1: Process movies CSV first to get movie IDs we'll insert
-    # ----------------------------
+    
     logging.info("Processing movies CSV...")
     movies_to_insert = []
     target_movie_ids = set()  # CSV movie IDs we're going to insert
@@ -391,7 +389,7 @@ def load_movies_and_ratings(movies_csv_path, ratings_csv_path, conn):
                 csv_movie_id = str(row['id'])
                 target_movie_ids.add(csv_movie_id)
                 
-                # Parse genres
+                # 
                 try:
                     genres_list = eval(row['genres']) if row.get('genres') else []
                     raw_genres = json.dumps(genres_list)
@@ -431,9 +429,7 @@ def load_movies_and_ratings(movies_csv_path, ratings_csv_path, conn):
 
     logging.info(f"Will insert {len(target_movie_ids)} movies. Loading ratings only for these movies...")
 
-    # ----------------------------
-    # Step 2: Load ratings CSV - only for movies we're inserting
-    # ----------------------------
+    
     logging.info("Loading ratings into memory (filtered by target movies)...")
     ratings_map = {}  # key: old CSV movieId, value: list of (user_id, rating, timestamp)
     ratings_count = 0
@@ -454,9 +450,7 @@ def load_movies_and_ratings(movies_csv_path, ratings_csv_path, conn):
 
     logging.info(f"Loaded {ratings_count} ratings for {len(ratings_map)} movies")
 
-    # ----------------------------
-    # Step 3: Insert genres
-    # ----------------------------
+    
     logging.info(f"Inserting {len(genres_to_insert)} genres...")
     execute_values(
         cur,
@@ -467,9 +461,7 @@ def load_movies_and_ratings(movies_csv_path, ratings_csv_path, conn):
         list(genres_to_insert)
     )
 
-    # ----------------------------
-    # Step 4: Insert movies and get DB IDs
-    # ----------------------------
+    
     logging.info(f"Inserting {len(movies_to_insert)} movies...")
     movie_id_map = {}
     ratings_to_insert = []
@@ -504,9 +496,7 @@ def load_movies_and_ratings(movies_csv_path, ratings_csv_path, conn):
 
     conn.commit()  # commit movies, genres
 
-    # ----------------------------
-    # Step 5: Insert movie_genres
-    # ----------------------------
+    
     logging.info(f"Inserting {len(movie_genres_to_insert)} movie_genres...")
     execute_values(
         cur,
@@ -517,9 +507,7 @@ def load_movies_and_ratings(movies_csv_path, ratings_csv_path, conn):
         movie_genres_to_insert
     )
 
-    # ----------------------------
-    # Step 6: Insert ratings
-    # ----------------------------
+    
     logging.info(f"Inserting {len(ratings_to_insert)} ratings...")
     if ratings_to_insert:
         execute_values(
@@ -545,33 +533,33 @@ def main():
     args = parser.parse_args()
 
     try:
-        # Step 1: Validate configuration
+        
         if not DB_HOST:
             logging.error("DATABASE_HOST not set. Postgres configuration required.")
             sys.exit(1)
 
-        # Step 2: Wait for Postgres if configured
+       
         if DB_HOST and DB_HOST != 'localhost':
             if not wait_for_postgres(DB_HOST, DB_PORT, DB_USER):
                 logging.error("Failed to connect to Postgres")
                 sys.exit(1)
 
-        # Step 3: Ensure database exists
+        
         ensure_database_exists()
 
-        # Step 4: Connect to target database
+        
         conn = psycopg2.connect(
             host=DB_HOST, port=DB_PORT, dbname=DB_NAME,
             user=DB_USER, password=DB_PASS
         )
 
-        # Step 5: Apply schema
+        
         apply_schema(conn)
 
-        # Step 6: Create admin user
+        
         create_admin_user(conn)
 
-        # Step 7: Check if movies table has data
+        
         if movies_table_has_data(conn):
             logging.info("Movies table already has data. Skipping data load.")
             conn.close()
@@ -580,7 +568,7 @@ def main():
 
             conn.close()
 
-            # Download dataset if not skipped
+            
             if not args.skip_download:
                 csv_path = download_dataset(args.data_dir)
             else:
@@ -589,7 +577,7 @@ def main():
                     logging.error(f"CSV file not found at {csv_path}")
                     sys.exit(1)
 
-            # Reconnect and load data
+            
             conn = psycopg2.connect(
                 host=DB_HOST, port=DB_PORT, dbname=DB_NAME,
                 user=DB_USER, password=DB_PASS

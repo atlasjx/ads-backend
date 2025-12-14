@@ -101,8 +101,6 @@ def require_auth(f):
 def require_admin(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
-        # Como este decorator vem DEPOIS do require_auth, 
-        # o request.user_role já existe.
         
         role = getattr(request, 'user_role', None)
         
@@ -545,7 +543,7 @@ def logout():
 @require_auth
 def get_myMovies():
 
-    user_id = request.user_id #Obtém o ID do usuário autenticado para filtrar os filmes avaliados por ele 
+    user_id = request.user_id #Obtém o ID do user para filtrar os filmes avaliados por ele 
     
     page = request.args.get('page', 1, type=int)
     limit = request.args.get('limit', 20, type=int)
@@ -649,8 +647,6 @@ def insert_movie():
         return jsonify({'error': 'Missing required field: title'}), 400
 
     try:
-        # Prepara os dados, garantindo que campos opcionais sejam None se não existirem
-        # Também trata listas (como genres) para strings JSON se necessário
         
         raw_genres = data.get('raw_genres', [])
         if isinstance(raw_genres, (list, dict)):
@@ -660,7 +656,6 @@ def insert_movie():
         if isinstance(raw_companies, (list, dict)):
             raw_companies = json.dumps(raw_companies)
 
-        # Tratamento especial para data vazia
         release_date = data.get('release_date')
         if release_date == "":
             release_date = None
@@ -709,10 +704,7 @@ def insert_movie():
 
         movie_id = cur.fetchone()['id']
         conn.commit()
-        
-        # Opcional: Se quiseres inserir na tabela de junção movie_genres logo aqui, 
-        # terias que processar o array de IDs de géneros.
-
+    
         cur.close()
         conn.close()
 
@@ -722,9 +714,6 @@ def insert_movie():
         }), 201
 
     except Exception as e:
-        # Se usares traceback, não esqueças de importar 'traceback' no topo
-        import traceback
-        print(traceback.format_exc()) # Log no console do servidor
         return jsonify({'error': str(e)}), 500
 
 @app.route("/api/admin/movies/<int:movie_id>", methods=['PUT'])
@@ -740,9 +729,7 @@ def update_movie(movie_id):
     if not data:
         return jsonify({'error': 'No data provided'}), 400
 
-    # 1. Lista de segurança (Allowlist)
-    # Define estritamente quais colunas podem ser alteradas para evitar SQL Injection 
-    # ou alteração de campos proibidos (como o ID).
+    
     allowed_fields = [
         'imdb_id', 'title', 'original_title', 'overview', 'release_date',
         'adult', 'budget', 'revenue', 'runtime', 'popularity', 
@@ -753,25 +740,20 @@ def update_movie(movie_id):
     updates = []
     params = []
 
-    # 2. Constrói a query dinamicamente baseada no JSON recebido
     for field in allowed_fields:
         if field in data:
             updates.append(f"{field} = %s")
             params.append(data[field])
 
-    # Se o utilizador enviou campos, mas nenhum deles está na lista permitida
     if not updates:
         return jsonify({'error': 'No valid fields provided to update'}), 400
 
-    # Adiciona o ID do filme ao final dos parâmetros para a cláusula WHERE
     params.append(movie_id)
 
     try:
         conn = get_db_connection()
         cur = conn.cursor()
 
-        # 3. Monta e executa o SQL
-        # Ex: "UPDATE movies SET title = %s, overview = %s WHERE id = %s"
         sql_query = f"UPDATE movies SET {', '.join(updates)} WHERE id = %s RETURNING id"
         
         cur.execute(sql_query, params)
@@ -791,9 +773,7 @@ def update_movie(movie_id):
         }), 200
 
     except Exception as e:
-        # Dica: Em produção, use logging em vez de print
-        print(f"Update error: {e}")
-        return jsonify({'error': 'Failed to update movie', 'details': str(e)}), 500
+        return jsonify({'error': str(e)}), 500
     
 @app.route("/api/movies/search", methods=['GET'])
 def search_movies():
@@ -817,12 +797,8 @@ def search_movies():
 
     try:
         with get_db_connection() as conn:
-            with conn.cursor() as cur: # Idealmente usa cursor_factory=RealDictCursor
+            with conn.cursor() as cur:
 
-                # --- MUDANÇA AQUI ---
-                # Adicionei uma subquery (linha 4 a 8 do SQL abaixo)
-                # Ela vai buscar todos os géneros associados a este ID de filme
-                # e devolve-os como uma lista (ARRAY)
                 base_query = """
                     SELECT 
                         m.id, 
@@ -843,11 +819,11 @@ def search_movies():
                     FROM movies m
                 """
 
-                # Pesquisa apenas no Título
+                
                 where_clauses = ["m.title ILIKE %s"]
                 params = [f"%{query}%"]
 
-                # Lógica de Filtro (JOIN apenas se necessário para filtrar)
+                
                 if genre and genre.lower() != "all":
                     base_query += """
                         JOIN movie_genres mg ON m.id = mg.movie_id
@@ -870,7 +846,7 @@ def search_movies():
                 cur.execute(final_query, params)
                 movies = cur.fetchall() 
 
-                # --- Count Query (Mantém-se igual) ---
+                
                 count_params = [f"%{query}%"]
                 count_query = "SELECT COUNT(*) as count FROM movies m"
                 
@@ -900,7 +876,6 @@ def search_movies():
         }), 200
 
     except Exception as e:
-        print(f"SQL Error: {str(e)}")
         return jsonify({'error': str(e)}), 500
     
 @app.route("/api/movie/<int:movie_id>/rating", methods=['POST'])
@@ -921,7 +896,7 @@ def submit_rating(movie_id):
         conn = get_db_connection()
         cur = conn.cursor()
 
-        # Insert or update rating
+        
         cur.execute(
             """
             INSERT INTO ratings (user_id, movie_id, rating, timestamp, updated_at)
@@ -955,19 +930,18 @@ def delete_rating(movie_id):
     """
     Remove a avaliação do utilizador autenticado para um filme específico.
     """
-    user_id = request.user_id # Obtido do token pelo decorator @require_auth
+    user_id = request.user_id
 
     try:
         conn = get_db_connection()
         cur = conn.cursor()
 
-        # Executa a remoção garantindo que o rating pertence ao user logado
         cur.execute(
             "DELETE FROM ratings WHERE user_id = %s AND movie_id = %s",
             (user_id, movie_id)
         )
         
-        # cur.rowcount diz quantas linhas foram afetadas
+
         rows_deleted = cur.rowcount
 
         conn.commit()
@@ -984,21 +958,12 @@ def delete_rating(movie_id):
     
 @app.route("/api/home", methods=['GET'])
 def get_home():
-    """Get main catalog with recommendation system"""
-    '''user_id = None
-
-    # Check if user is authenticated
-    token = request.headers.get('Authorization')
-    if token:
-        if token.startswith('Bearer '):
-            token = token[7:]
-        user_id = active_tokens.get(token)'''
+    """Get main catalog"""
 
     try:
         conn = get_db_connection()
         cur = conn.cursor()
 
-        # Get popular movies
         cur.execute(
             """
             SELECT id, imdb_id, title, overview, release_date,
@@ -1010,7 +975,6 @@ def get_home():
         )
         popular_movies = cur.fetchall()
 
-        # Get recent movies
         cur.execute(
             """
             SELECT id, imdb_id, title, overview, release_date,
@@ -1024,31 +988,6 @@ def get_home():
         recent_movies = cur.fetchall()
 
 
-        # If user is authenticated, get personalized recommendations
-        '''if user_id:
-            # Simple recommendation: movies from genres user has rated highly
-            cur.execute(
-                """
-                SELECT DISTINCT m.id, m.imdb_id, m.title, m.overview, m.release_date,
-                       m.popularity, m.vote_average, m.vote_count, m.poster_path
-                FROM movies m
-                JOIN movie_genres mg ON m.id = mg.movie_id
-                WHERE mg.genre_id IN (
-                    SELECT DISTINCT mg2.genre_id
-                    FROM ratings r
-                    JOIN movie_genres mg2 ON r.movie_id = mg2.movie_id
-                    WHERE r.user_id = %s AND r.rating >= 7
-                )
-                AND m.id NOT IN (
-                    SELECT movie_id FROM ratings WHERE user_id = %s
-                )
-               ORDER BY m.popularity DESC, m.id DESC
-                LIMIT 20
-                """,
-                (user_id, user_id)
-            )
-            recommended_movies = cur.fetchall()'''
-
         cur.close()
         conn.close()
 
@@ -1056,9 +995,6 @@ def get_home():
             'popular': popular_movies,
             'recent': recent_movies
         }
-
-        '''if recommended_movies:
-            response['recommended'] = recommended_movies'''
 
         return jsonify(response), 200
 
@@ -1072,7 +1008,7 @@ def get_home_recommendations():
     user_id = request.user_id
 
     try:
-        # ✅ FIX: Initialize the empty dictionary first
+        
         response = {} 
 
         conn = get_db_connection()
@@ -1080,9 +1016,9 @@ def get_home_recommendations():
 
         recommended_movies = []
 
-        # If user is authenticated, get personalized recommendations
+        
         if user_id: 
-            # Simple recommendation: movies from genres user has rated highly
+            
             cur.execute(
                 """
                 SELECT DISTINCT m.id, m.imdb_id, m.title, m.overview, m.release_date,
@@ -1105,27 +1041,25 @@ def get_home_recommendations():
             )
             recommended_movies = cur.fetchall()
             
-            # Now this line works because 'response' exists
+            
             response['user_id'] = user_id
 
         cur.close()
         conn.close()
 
-        # Add recommended movies to response if the list is not empty
+        
         if recommended_movies:
             response['recommended'] = recommended_movies
         elif user_id:
-             # Add a message if user is authenticated but no recommendations are found
+             
              response['message'] = 'No personalized recommendations found based on your high ratings (>= 7).'
         else:
-             # Add a message if the user is not authenticated
+             
              response['message'] = 'User not authenticated. No personalized recommendations available.'
 
         return jsonify(response), 200
 
     except Exception as e:
-        # It is good practice to print the error to your console for debugging
-        print(f"Error: {e}") 
         return jsonify({'error': str(e)}), 500
     
 @app.route('/api/profile', methods=['GET'])
@@ -1135,14 +1069,14 @@ def get_profile():
     Get authenticated user's profile data (details and recent ratings).
     Requires a valid Authorization Bearer token.
     """
-    # user_id is set by the @require_auth decorator
+    
     user_id = request.user_id 
     
     try:
         conn = get_db_connection()
         cur = conn.cursor()
 
-        # 1. Fetch User Details
+       
         cur.execute(
             "SELECT id, username, email, role, created_at, profile_picture_path FROM users WHERE id = %s",
             (user_id,)
@@ -1152,10 +1086,10 @@ def get_profile():
         if not user_data:
             cur.close()
             conn.close()
-            # This should ideally not happen if authentication passed
+            
             return jsonify({'error': 'User not found'}), 404
 
-        # 2. Fetch User's Recent Ratings
+        
         cur.execute(
             """
             SELECT r.rating, r.updated_at, m.title, m.poster_path, m.id AS movie_id
@@ -1172,7 +1106,7 @@ def get_profile():
         cur.close()
         conn.close()
 
-        # Format the response
+       
         response = {
             'user': {
                 'id': user_data['id'],
@@ -1203,8 +1137,7 @@ def get_profile():
 def update_profile():
     """
     Update authenticated user's profile data (username, email) and
-    allows editing of recent ratings provided in the request body.
-    Requires a valid Authorization Bearer token.
+    allows editing recent ratings
     """
     user_id = request.user_id 
     data = request.get_json()
@@ -1215,7 +1148,7 @@ def update_profile():
     username = data.get('username')
     email = data.get('email')
     profile_picture_path = data.get('profile_picture_path')
-    ratings_to_update = data.get('recent_ratings', []) # Lista de {movie_id, rating}
+    ratings_to_update = data.get('recent_ratings', []) 
     
     update_clauses = []
     params = []
@@ -1225,16 +1158,16 @@ def update_profile():
         conn = get_db_connection()
         cur = conn.cursor()
 
-        # 1. Atualizar Detalhes do Usuário (Username e Email)
+        
         if username or email or profile_picture_path:
             
-            # Validação
+            
             if username and username.strip() == "":
                 return jsonify({'error': 'Username cannot be empty'}), 400
             if email and not validate_email(email):
                 return jsonify({'error': 'Invalid email format'}), 400
             
-            # Construção da Query
+            
             if username:
                 update_clauses.append("username = %s")
                 params.append(username)
@@ -1254,7 +1187,7 @@ def update_profile():
             cur.execute(sql_query, params)
             updated_user = cur.fetchone()
         else:
-            # Se não houver campos de usuário para atualizar, buscamos os dados atuais para o retorno
+            
             cur.execute("SELECT id, username, email, role, profile_picture_path FROM users WHERE id = %s", (user_id,))
             updated_user = cur.fetchone()
         
@@ -1262,13 +1195,12 @@ def update_profile():
             conn.close()
             return jsonify({'error': 'User not found'}), 404
 
-        # 2. Atualizar Avaliações (Ratings)
         for rating_data in ratings_to_update:
             movie_id = rating_data.get('movie_id')
             rating = rating_data.get('rating')
 
             if movie_id is not None and rating is not None and (0 <= rating <= 10):
-                # Usamos a lógica ON CONFLICT DO UPDATE (upsert) para garantir que a avaliação seja inserida/atualizada
+                
                 cur.execute(
                     """
                     INSERT INTO ratings (user_id, movie_id, rating, updated_at)
@@ -1280,10 +1212,10 @@ def update_profile():
                 )
                 updated_ratings_count += 1
             elif rating is not None and not (0 <= rating <= 10):
-                # Se a avaliação estiver fora do intervalo permitido, retornamos um erro específico
-                 return jsonify({'error': f'Invalid rating value ({rating}) for movie ID {movie_id}. Rating must be between 0 and 10'}), 400
+                
+                return jsonify({'error': f'Invalid rating value ({rating}) for movie ID {movie_id}. Rating must be between 0 and 10'}), 400
         
-        # 3. Commit e Retorno
+        
         conn.commit()
         cur.close()
         conn.close()
@@ -1296,7 +1228,7 @@ def update_profile():
 
     except psycopg2.IntegrityError as e:
         conn.rollback()
-        # Tratamento de erros de unicidade (username ou email já existem)
+        
         error_msg = str(e)
         if 'users_username_key' in error_msg or 'username' in error_msg.lower():
             return jsonify({'error': 'Username already taken'}), 409
@@ -1336,8 +1268,6 @@ def delete_movie(movie_id):
         return jsonify({'error': str(e)}), 500
 
 
-
-# Ensure the flask app runs only when this script is executed directly
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=80)
     
