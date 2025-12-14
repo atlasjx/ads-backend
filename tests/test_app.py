@@ -328,17 +328,53 @@ def test_get_my_movies(token):
     assert "total" in data
 
 
-"""def test_get_movie_ratings():
-    #Test getting ratings for a movie
-    # Rota: /api/movies/<id>/ratings
-    res = requests.get(f"{API}/movies/{TEST_MOVIE_ID}/ratings")
-    
-    data = log_roundtrip(res, "GET MOVIE RATINGS")
+def test_get_movie_ratings():
+    """
+    Test getting ratings for a movie with pagination.
+    Valida a estrutura exata retornada pela função get_movie_ratings_ai.
+    """
+    # 1. Verificar se temos um ID de filme (definido nos testes anteriores)
+    global TEST_MOVIE_ID
+    if TEST_MOVIE_ID is None:
+        pytest.skip("Skipping: ID do filme não foi encontrado.")
 
+    # 2. Definir parâmetros de paginação
+    page = 1
+    limit = 10
+    url = f"{API}/movies/{TEST_MOVIE_ID}/ratings?page={page}&limit={limit}"
+
+    # 3. Fazer a requisição
+    res = requests.get(url)
+    
+    # 4. Log do resultado
+    data = log_roundtrip(res, "GET MOVIE RATINGS (PAGINATED)")
+
+    # 5. Asserções de Status e ID
     assert res.status_code == 200
+    # O ID retornado deve ser igual ao ID pedido (convertendo para int para garantir)
+    assert int(data["movie_id"]) == int(TEST_MOVIE_ID)
+
+    # 6. Validar Campos da Resposta
+    # Baseado no teu código: retorna 'average_rating' e 'ratings'
     assert "average_rating" in data
-    assert "rating_counts" in data # A app.py retorna counts
-"""
+    assert "ratings" in data
+    assert isinstance(data["ratings"], list)
+
+    # 7. Validar consistência dos dados
+    # Como o teste 'test_submit_rating' corre antes deste, esperamos que exista pelo menos 1 rating.
+    # Se houver ratings, a média não pode ser None.
+    if len(data["ratings"]) > 0:
+        assert data["average_rating"] is not None
+        assert isinstance(data["average_rating"], (int, float))
+        
+        # Validar estrutura de um item individual da lista
+        first_review = data["ratings"][0]
+        assert "user_id" in first_review
+        assert "rating" in first_review
+        assert "timestamp" in first_review
+    else:
+        # Se não houver ratings, a média deve ser None (conforme a tua lógica: if not stats... return None)
+        assert data["average_rating"] is None
 
 def test_delete_rating():
     """Test deleting a rating (Requires Admin because of @require_admin)."""
